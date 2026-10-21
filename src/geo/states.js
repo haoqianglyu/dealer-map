@@ -18,24 +18,37 @@ export function worstState(projects) {
 export const alarmCount = (projects) => projects.reduce((s, p) => s + (p.state === 'alarm' ? p.alarmCount || 1 : 0), 0)
 export const hasNewAlarm = (projects) => projects.some((p) => p.state === 'alarm' && p.newAlarm)
 
-// 告警接入前：所有项目为 normal。将来在这里按 bigscreen_fable 的 getAlarmList
-// （POST /ctrl/get-alarm-list → entities[{ level: 1|2, timestamp, ... }]）按项目汇总后写入 state/alarmCount/newAlarm。
+// 告警等级 → 状态：1 = alarm（红）、2 = warning（黄）、≥3 = notice（只在弹窗里计数，不改变标记颜色）
+export const levelState = (level) => (level === 1 ? 'alarm' : level === 2 ? 'warning' : 'notice')
+export const NOTICE_COLOR = '#5b8ff9'
+// 进行中 = 未处理（status 1）且未恢复（无 end_timestamp）；只有进行中的告警决定标记颜色
+export const isActiveAlarm = (a) => a.status === 1 && !a.end
+const NEW_MS = 60 * 60 * 1000 // 1 小时内的进行中一级告警：标记闪烁
+
+// alarms（listAlarms 结果）→ Map(projectId → { state, alarmCount, newAlarm, alarms })
+export function alarmStates(alarms) {
+  const m = new Map()
+  const now = Date.now()
+  for (const a of alarms) {
+    const o = m.get(a.projectId) || { state: 'normal', alarmCount: 0, newAlarm: false, alarms: [] }
+    o.alarms.push(a)
+    if (isActiveAlarm(a)) {
+      const st = levelState(a.level)
+      if (st !== 'notice' && stateRank(st) > stateRank(o.state)) o.state = st
+      if (a.level === 1) {
+        o.alarmCount++
+        if (now - a.ts < NEW_MS) o.newAlarm = true
+      }
+    }
+    m.set(a.projectId, o)
+  }
+  for (const o of m.values()) o.alarms.sort((x, y) => y.ts - x.ts)
+  return m
+}
+
 export function applyStates(projects, stateById = null) {
   return projects.map((p) => {
     const s = stateById?.get(p.id)
     return s ? { ...p, ...s } : p
   })
-}
-
-// 仅开发用：按项目 id 生成确定性的假状态，便于截图检查样式
-export function fakeStates(projects) {
-  const m = new Map()
-  for (const p of projects) {
-    let h = 0
-    for (const ch of p.id) h = (h * 31 + ch.charCodeAt(0)) >>> 0
-    const r = h % 20
-    const state = r < 3 ? 'alarm' : r < 6 ? 'warning' : r < 8 ? 'offline' : 'normal'
-    m.set(p.id, { state, alarmCount: state === 'alarm' ? 1 + (h % 3) : 0, newAlarm: state === 'alarm' && h % 2 === 0 })
-  }
-  return m
 }

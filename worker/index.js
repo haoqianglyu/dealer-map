@@ -10,6 +10,7 @@ const API_ALLOW = [
   /^\/projects$/,
   /^\/ctrl\/projects$/,
   /^\/project\/new-list$/,
+  /^\/device-alarms$/,
 ]
 
 const SECURITY_HEADERS = {

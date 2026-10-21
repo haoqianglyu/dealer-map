@@ -9,6 +9,7 @@
         :districts="districtMarkers"
         :mode="mode"
         :center="center"
+        :focus="focus"
       />
       <FallbackMap
         v-else
@@ -45,9 +46,6 @@
           <button :class="{ on: mode === 'markers' }" @click="mode = 'markers'">点位</button>
           <button :class="{ on: mode === 'heat' }" @click="mode = 'heat'">热力</button>
         </div>
-        <button v-if="IS_DEV" class="logout" :class="{ on: simulate }" title="仅开发环境：注入假状态以检查告警样式" @click="simulate = !simulate">
-          {{ simulate ? '关闭模拟状态' : '模拟状态' }}
-        </button>
         <span class="clock">{{ clock }}</span>
         <span class="user" :title="scopeHint">{{ userName }}</span>
         <button class="logout" @click="logout">退出</button>
@@ -88,6 +86,18 @@
           <b>{{ k.value }}</b><span>{{ k.label }}</span><small v-if="k.sub">{{ k.sub }}</small>
         </div>
       </div>
+
+      <TechPanel :title="`告警 · 10 天内一级（进行中 ${activeAlarmCount} / 共 ${alarmJoined.length}）`" variant="13" :background-color="PANEL_BG" style="height: 260px">
+        <p v-if="alarmError" class="muted">{{ alarmError }}</p>
+        <ul class="list alarms">
+          <li v-for="a in alarmFeed" :key="a.id" :class="{ on: a.active, off: !a.located }" :title="a.located ? '定位到小区' : '该小区尚未定位'" @click="focusAlarm(a)">
+            <span class="date">{{ fmtTs(a.ts) }}</span>
+            <span class="name">{{ a.label }}<small>{{ a.district }}{{ a.active ? '' : a.status === 1 ? ' · 已恢复' : ' · 已处理' }}</small></span>
+            <span class="meta">{{ a.device }} · {{ a.content }}</span>
+          </li>
+          <li v-if="!alarmFeed.length && !alarmError" class="empty">10 天内无一级告警</li>
+        </ul>
+      </TechPanel>
 
       <TechPanel :title="regionFilter ? '各区项目' : '各城市 / 区县项目'" variant="13" :loading="loading" :background-color="PANEL_BG" :style="{ height: `${Math.max(150, panelRows.length * 24 + 72)}px` }">
         <div v-if="areaRows.length > TOP_AREAS" class="seg seg--panel">
@@ -176,7 +186,7 @@ import TechPanel from '@/components/TechPanel.vue'
 import EChart from '@/components/EChart.vue'
 import AmapView from '@/components/AmapView.vue'
 import FallbackMap from '@/components/FallbackMap.vue'
-import { me, getDistributor, pickProjectEndpoint, projectPage, listAllProjects, listProjectsLegacy } from '@/api'
+import { listAlarms, me, getDistributor, pickProjectEndpoint, projectPage, listAllProjects, listProjectsLegacy } from '@/api'
 import { session } from '@/api/session'
 import { useTokenRefresh } from '@/composables/useTokenRefresh'
 import { toProject } from '@/geo/model'
@@ -184,7 +194,7 @@ import { loadShared, postShared } from '@/geo/shared'
 import { hasAmapKey, loadAmap } from '@/geo/amap'
 import { loadOverrides, loadSeed, lookupLocal, forgetFailures, exportSeed, seedKey, createGeocodeQueue, jitter } from '@/geo/geocoder'
 import { regionInfo } from '@/utils/region'
-import { STATES, applyStates, fakeStates } from '@/geo/states'
+import { STATES, applyStates, alarmStates, isActiveAlarm } from '@/geo/states'
 import { fmtNumber, fmtArea } from '@/utils/format'
 import { tooltipStyle, categoryAxis, valueAxis, AXIS_LABEL_COLOR } from '@/utils/chartTheme'
 
@@ -207,7 +217,20 @@ const distributorFilter = ref('')
 const distributorNames = reactive({})
 const geojson = shallowRef(null)
 const mode = ref('markers')
-const simulate = ref(false)
+// ---------- 告警（只取 10 天内一级告警，60 秒刷新） ----------
+const alarms = shallowRef([])
+const alarmError = ref('')
+const alarmStateMap = computed(() => alarmStates(alarms.value))
+const focus = shallowRef(null)
+let alarmTimer = null
+async function loadAlarms() {
+  try {
+    alarms.value = await listAlarms({ level: '1', days: 10 })
+    alarmError.value = ''
+  } catch (e) {
+    alarmError.value = e?.response?.status === 403 ? '当前账号无告警查看权限' : '告警加载失败，稍后自动重试'
+  }
+}
 const timeMode = ref('year')
 const AMapRef = shallowRef(null)
 const amapNotice = ref(hasAmapKey() ? '' : '缺少高德 Key：请在 .env.local 配置 VITE_AMAP_KEY / VITE_AMAP_SECURITY 后重启。当前以区县中心近似显示。')
@@ -271,7 +294,7 @@ const projects = computed(() => {
     ? cityProjects.value.filter((p) => p.distributorId === distributorFilter.value)
     : cityProjects.value
   // 告警接入后在此注入真实状态；开发环境可用「模拟状态」检查样式
-  return simulate.value ? applyStates(list, fakeStates(list)) : list
+  return applyStates(list, alarmStateMap.value)
 })
 
 // ---------- 按小区分组 ----------
@@ -381,6 +404,34 @@ const needFix = computed(() =>
     }))
     .sort((a, b) => b.count - a.count)
 )
+
+// 告警列表（最新在前）：关联到项目 → 小区标记
+const projectGroup = computed(() => {
+  const m = new Map()
+  for (const g of groups.value) for (const p of g.projects) m.set(p.id, g)
+  return m
+})
+const alarmJoined = computed(() => alarms.value.filter((a) => projectGroup.value.has(a.projectId)))
+const activeAlarmCount = computed(() => alarmJoined.value.filter(isActiveAlarm).length)
+const alarmFeed = computed(() =>
+  [...alarmJoined.value]
+    .sort((a, b) => b.ts - a.ts)
+    .slice(0, 100)
+    .map((a) => {
+      const g = projectGroup.value.get(a.projectId)
+      return { ...a, active: isActiveAlarm(a), key: g.key, label: g.community || '未识别小区', district: g.districtName, located: Boolean(geoResults[g.key]?.lnglat) }
+    })
+)
+const fmtTs = (ms) => {
+  const d = new Date(ms)
+  const z = (n) => String(n).padStart(2, '0')
+  return `${z(d.getMonth() + 1)}-${z(d.getDate())} ${z(d.getHours())}:${z(d.getMinutes())}`
+}
+function focusAlarm(a) {
+  if (!a.located) return
+  mode.value = 'markers'
+  focus.value = { key: a.key, n: Date.now() }
+}
 
 // ---------- 统计 ----------
 const kpis = computed(() => {
@@ -727,10 +778,13 @@ onMounted(async () => {
   geoReady = true
   loadGeojson(cityCode.value)
   geocodeGroups()
+  loadAlarms()
+  alarmTimer = setInterval(loadAlarms, 60000) // 告警 60 秒刷新；项目列表不重取
 })
 
 onBeforeUnmount(() => {
   clearInterval(clockTimer)
+  clearInterval(alarmTimer)
   queue && queue.stop()
 })
 </script>
@@ -1120,6 +1174,36 @@ onBeforeUnmount(() => {
       font-size: 11px;
       color: #ffc722;
       word-break: break-all;
+    }
+  }
+  &.alarms {
+    height: calc(100% - 8px);
+    overflow-y: auto;
+    li {
+      cursor: pointer;
+      border-left: 2px solid transparent;
+      &:hover {
+        background: rgba(0, 212, 255, 0.06);
+      }
+      &.on {
+        border-left-color: #ff4d4f;
+        .name {
+          color: #ffd2d2;
+        }
+      }
+      &.off {
+        cursor: default;
+        opacity: 0.6;
+      }
+    }
+    .name small {
+      margin-left: 6px;
+      color: #6f95bb;
+    }
+    .meta {
+      overflow: hidden;
+      white-space: nowrap;
+      text-overflow: ellipsis;
     }
   }
 }

@@ -4,7 +4,7 @@
 
 <script setup>
 import { ref, watch, onMounted, onBeforeUnmount } from 'vue'
-import { STATES, stateRank, worstState, alarmCount, hasNewAlarm } from '@/geo/states'
+import { STATES, stateRank, worstState, alarmCount, hasNewAlarm, levelState, isActiveAlarm, NOTICE_COLOR } from '@/geo/states'
 
 // 高德地图：自定义 HTML 标记（每个小区一个，缩小时按区县汇总）+ 热力图
 // communities: [{ key, lnglat, exact, label, districtName, projects: [{ id, name, state, alarmCount, area, ... }] }]
@@ -15,6 +15,7 @@ const props = defineProps({
   districts: { type: Array, default: () => [] },
   mode: { type: String, default: 'markers' }, // markers | heat
   center: { type: Array, default: null },
+  focus: { type: Object, default: null }, // { key, n }：飞到该小区并打开弹窗（n 变化即触发）
 })
 
 const ZOOM_SPLIT = 12 // < 12 显示区县汇总，≥ 12 显示小区
@@ -45,12 +46,30 @@ function markerHtml({ count, projects, approx, district, label }) {
   </div>`
 }
 
+const fmtTs = (ms) => {
+  const d = new Date(ms)
+  const z = (n) => String(n).padStart(2, '0')
+  return `${z(d.getMonth() + 1)}-${z(d.getDate())} ${z(d.getHours())}:${z(d.getMinutes())}`
+}
+// 告警行：时间、设备、内容、等级（不含客户信息）
+const alarmRows = (alarms = []) =>
+  alarms
+    .slice(0, 6)
+    .map((a) => {
+      const st = levelState(a.level)
+      const color = st === 'notice' ? NOTICE_COLOR : STATES[st].color
+      const tag = isActiveAlarm(a) ? '' : a.status === 1 ? '（已恢复）' : '（已处理）'
+      return `<li class="al${isActiveAlarm(a) ? ' on' : ''}"><i style="background:${color}"></i><span class="t">${fmtTs(a.ts)}</span>
+        <span class="n">${esc(a.device)} · ${esc(a.content)}${tag}</span><span class="a">${a.level}级</span></li>`
+    })
+    .join('') + (alarms.length > 6 ? `<li class="al more">… 另 ${alarms.length - 6} 条</li>` : '')
+
 function popoverHtml(c) {
   const rows = [...c.projects]
-    .sort((a, b) => stateRank(b.state) - stateRank(a.state) || String(b.created).localeCompare(String(a.created)))
+    .sort((a, b) => stateRank(b.state) - stateRank(a.state) || (b.alarms?.length || 0) - (a.alarms?.length || 0) || String(b.created).localeCompare(String(a.created)))
     .map(
       (p) => `<li><i style="background:${STATES[p.state]?.color || STATES.normal.color}" title="${STATES[p.state]?.label || ''}"></i>
-        <span class="n">${esc(p.name || c.label)}</span><span class="a">${p.area ? `${p.area}㎡` : ''}</span></li>`
+        <span class="n">${esc(p.name || c.label)}</span><span class="a">${p.area ? `${p.area}㎡` : ''}</span></li>${alarmRows(p.alarms)}`
     )
     .join('')
   const alarms = alarmCount(c.projects)
@@ -173,6 +192,21 @@ watch(
     render()
   }
 )
+function focusCommunity(key) {
+  const c = props.communities.find((x) => x.key === key)
+  if (!c || !map) return
+  if (props.mode === 'heat') return
+  level = 'community'
+  map.setZoomAndCenter(Math.max(15, map.getZoom()), c.lnglat, true)
+  map.panBy(-SIDE_PANEL_PX / 2, 0)
+  render()
+  info.setContent(popoverHtml(c))
+  info.open(map, c.lnglat)
+}
+watch(
+  () => props.focus,
+  (f) => f && focusCommunity(f.key)
+)
 watch(
   () => props.center,
   (c) => c && map && centerOn(c)
@@ -268,7 +302,7 @@ onBeforeUnmount(() => {
   }
 }
 .dm-pop {
-  width: 280px;
+  width: 320px;
   font-size: 12px;
   color: #d8ecff;
   background: rgba(6, 18, 40, 0.96);
@@ -327,5 +361,27 @@ onBeforeUnmount(() => {
 .dm-pop li .a {
   color: #6f95bb;
   font-family: 'DIN Alternate', 'Bahnschrift', monospace;
+}
+.dm-pop li.al {
+  grid-template-columns: 8px auto 1fr auto;
+  gap: 6px;
+  padding: 2px 12px 2px 26px;
+  font-size: 11px;
+  color: #8fa9c6;
+}
+.dm-pop li.al.on {
+  color: #ffd2d2;
+}
+.dm-pop li.al i {
+  width: 6px;
+  height: 6px;
+}
+.dm-pop li.al .t {
+  font-family: 'DIN Alternate', 'Bahnschrift', monospace;
+  color: #6f95bb;
+}
+.dm-pop li.al.more {
+  display: block;
+  color: #6f95bb;
 }
 </style>

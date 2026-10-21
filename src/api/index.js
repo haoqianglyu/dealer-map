@@ -80,3 +80,44 @@ export const listProjectsLegacy = ({ region = '' } = {}) =>
   http
     .post('/project/new-list', { region, start_time: 1643644800000, end_time: Date.now() })
     .then((r) => r.data?.data || [])
+
+// 设备告警（只读）：POST /device-alarms { page_options, level: "1", start_time, end_time }（level 为字符串，时间为毫秒）。
+// 字段：timestamp = 最近一次发生时间（created_at 为 UTC 字符串、是该记录首次创建时间，会被复用）；
+// status 1 = 未处理、3 = 已处理（updated_at = 处理时间）；end_timestamp = 故障恢复时间（有值表示已恢复）。
+const toAlarm = (a) => ({
+  id: a.id,
+  projectId: a.project_id,
+  ts: Number(a.timestamp) || 0,
+  end: Number(a.end_timestamp) || 0,
+  status: Number(a.status) || 0,
+  level: Number(a.level) || 9,
+  device: a.device_info || '',
+  content: a.content || '',
+  type: a.equipment_type_name || '',
+})
+export async function listAlarms({ level = '1', days = 10, limit = 100, concurrency = 3 } = {}) {
+  const end = Date.now()
+  const body = (page) => ({ page_options: { page, limit }, level: String(level), start_time: end - days * 86400000, end_time: end })
+  const get = (page) =>
+    http.post('/device-alarms', body(page)).then((r) => ({
+      list: r.data?.device_alarm_entities || [],
+      total: parseInt(r.data?.total, 10) || 0,
+    }))
+  const first = await get(1)
+  const pages = Math.min(50, Math.ceil(first.total / limit))
+  const rest = Array.from({ length: Math.max(0, pages - 1) }, (_, i) => i + 2)
+  const out = [...first.list]
+  async function worker() {
+    while (rest.length) {
+      const r = await get(rest.shift())
+      if (!r.list.length) {
+        rest.length = 0
+        break
+      }
+      out.push(...r.list)
+    }
+  }
+  await Promise.all(Array.from({ length: concurrency }, worker))
+  const seen = new Set()
+  return out.filter((a) => (seen.has(a.id) ? false : (seen.add(a.id), true))).map(toAlarm)
+}
