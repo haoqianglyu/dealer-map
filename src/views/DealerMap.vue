@@ -1,5 +1,5 @@
 <template>
-  <div class="screen" :style="{ '--ui-zoom': uiZoom }">
+  <div class="screen">
     <!-- 地图（主视图，全屏） -->
     <div class="map-layer">
       <AmapView
@@ -22,6 +22,8 @@
       />
     </div>
 
+    <!-- 叠加界面层：按 1920×1080 设计稿与详情页同比例缩放（地图本身不缩放）；层本身透明且不接收鼠标 -->
+    <div class="ui" :style="uiStyle">
     <!-- 顶栏 -->
     <header class="topbar">
       <div class="brand">
@@ -151,6 +153,7 @@
         </div>
       </TechPanel>
     </aside>
+    </div>
   </div>
 </template>
 
@@ -160,6 +163,7 @@ import { useRouter, useRoute } from 'vue-router'
 import TechPanel from '@/components/TechPanel.vue'
 import CityPicker from '@/components/CityPicker.vue'
 import BrandLogo from '@/components/BrandLogo.vue'
+import { useScreenScale } from '@/composables/useScreenScale'
 import { brandFor } from '@/config/brand'
 import EChart from '@/components/EChart.vue'
 import AmapView from '@/components/AmapView.vue'
@@ -177,16 +181,9 @@ import { fmtNumber, fmtArea } from '@/utils/format'
 import { tooltipStyle, categoryAxis, valueAxis, AXIS_LABEL_COLOR } from '@/utils/chartTheme'
 
 defineOptions({ name: 'DealerMap' })
-// 大屏适配：地图本身铺满视口（地图不能放进 transform 缩放容器，否则鼠标坐标错位）；
-// 叠在地图上的界面（顶栏/侧栏/图例）按 1920×1080 设计稿用 CSS zoom 等比缩放
-const uiZoom = ref(1)
-function fitUi() {
-  const w = document.documentElement.clientWidth || window.innerWidth
-  const h = document.documentElement.clientHeight || window.innerHeight
-  uiZoom.value = Math.min(w / 1920, h / 1080)
-}
-fitUi()
-window.addEventListener('resize', fitUi)
+// 屏幕适配：地图本身铺满视口、不缩放（放进 transform 容器会让鼠标坐标错位）；
+// 叠在地图上的界面（顶栏/侧栏/图例）放在一个透明层里，与详情页用同一个比例缩放
+const { style: uiStyle } = useScreenScale()
 const PANEL_BG = 'rgba(3, 12, 30, 0.9)'
 const FETCH_ALL = import.meta.env.VITE_FETCH_ALL === 'true'
 const PAGE_SIZE = Number(import.meta.env.VITE_PAGE_SIZE) || 20
@@ -763,10 +760,19 @@ onBeforeUnmount(() => {
 .map-layer {
   position: absolute;
   inset: 0;
+  z-index: 0; /* 高德内部的 z-index 不越过叠加界面层 */
+}
+.ui {
+  z-index: 10;
+  pointer-events: none;
+  > .notice,
+  > .legend,
+  > .side {
+    pointer-events: auto;
+  }
 }
 
 .topbar {
-  zoom: var(--ui-zoom, 1);
   position: absolute;
   top: 0;
   left: 0;
@@ -887,7 +893,6 @@ onBeforeUnmount(() => {
 }
 
 .notice {
-  zoom: var(--ui-zoom, 1);
   position: absolute;
   top: 74px;
   left: 50%;
@@ -924,7 +929,6 @@ onBeforeUnmount(() => {
   color: #b7d3f0;
 }
 .geo-bar {
-  zoom: var(--ui-zoom, 1);
   position: absolute;
   top: 0;
   left: 0;
@@ -953,10 +957,9 @@ onBeforeUnmount(() => {
   }
 }
 .legend {
-  zoom: var(--ui-zoom, 1);
   position: absolute;
   left: 24px;
-  bottom: 34px; /* 让出底部高德 logo / 版权；比例尺放在图例上方 */
+  bottom: calc(34px / var(--ui-scale, 1)); /* 让出底部高德 logo / 版权（它们不缩放，按屏幕像素留 34px） */
   display: flex;
   gap: 18px;
   padding: 8px 14px;
@@ -992,7 +995,6 @@ onBeforeUnmount(() => {
 }
 
 .side {
-  zoom: var(--ui-zoom, 1);
   position: absolute;
   top: 72px;
   right: 16px;

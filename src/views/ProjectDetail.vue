@@ -223,7 +223,7 @@ import { ref, reactive, computed, onMounted, onBeforeUnmount, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import SmallSelect from '@/components/SmallSelect.vue'
 import BoxLoading from '@/components/BoxLoading.vue'
-import { useScreenScale } from '@/composables/useScreenScale'
+import { useScreenScale, DESIGN_H } from '@/composables/useScreenScale'
 import BrandLogo from '@/components/BrandLogo.vue'
 import { session } from '@/api/session'
 import EChart from '@/components/EChart.vue'
@@ -236,7 +236,7 @@ import { tooltipStyle, categoryAxis, valueAxis } from '@/utils/chartTheme'
 import { isShowroom, showName } from '@/utils/showroom'
 
 defineOptions({ name: 'ProjectDetail' })
-const screenStyle = useScreenScale()
+const { style: screenStyle } = useScreenScale({ minW: 1440, minH: DESIGN_H }) // 高度不足 1080 设计稿时整页纵向滚动（不压扁卡片）
 const clock = ref('')
 const WEEK = '日一二三四五六'
 function tickClock() {
@@ -567,7 +567,7 @@ onBeforeUnmount(() => {
 .pd-screen {
   position: fixed;
   inset: 0;
-  overflow: hidden;
+  overflow: auto;
   background: var(--dm-page-bg, #050d1d);
 }
 .pd {
@@ -577,11 +577,7 @@ onBeforeUnmount(() => {
   --pd-text: var(--dm-text, #d8ecff);
   --pd-muted: var(--dm-text-muted, #93b5d6);
   --pd-accent: var(--dm-accent, #00d4ff);
-  /* 1920×1080 设计画布，居中后整体缩放（见 useScreenScale） */
-  position: absolute;
-  left: 50%;
-  top: 50%;
-  transform-origin: 0 0;
+  /* 1920×1080 设计稿，按统一比例缩放铺满视口（见 useScreenScale；定位/尺寸/缩放由内联样式给出） */
   display: flex;
   flex-direction: column;
   color: var(--pd-text);

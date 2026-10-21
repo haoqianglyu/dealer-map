@@ -3,7 +3,7 @@
 </template>
 
 <script setup>
-import { ref, watch, onMounted, onBeforeUnmount } from 'vue'
+import { ref, watch, onMounted, onBeforeUnmount, onActivated, nextTick } from 'vue'
 import { createWarmLights } from './warmLights'
 import { showName } from '@/utils/showroom'
 import { STATES, stateRank, worstState, alarmCount, hasNewAlarm, levelState, isActiveAlarm, NOTICE_COLOR } from '@/geo/states'
@@ -234,6 +234,9 @@ watch(
   () => props.center,
   (c) => c && map && centerOn(c)
 )
+
+// keep-alive：在详情页时窗口尺寸可能变了，回到地图页时让高德重新量一次容器
+onActivated(() => nextTick(() => map && typeof map.resize === 'function' && map.resize()))
 
 onBeforeUnmount(() => {
   if (map) {
