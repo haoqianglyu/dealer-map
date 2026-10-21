@@ -24,7 +24,7 @@
       <div class="brand">
         <span class="bar" />
         <h1>{{ scopeTitle }}</h1>
-        <span class="city">{{ cityName || '—' }} · 项目分布</span>
+        <span class="city">{{ regionFilter ? cityName || '—' : '全部城市' }} · 项目分布</span>
       </div>
       <div class="controls">
         <label v-if="cityOptions.length > 1 || regionFilter">
@@ -54,13 +54,19 @@
       </div>
     </header>
 
+    <!-- 顶部定位进度条 -->
+    <div v-if="AMapRef && geoPending > 0" class="geo-bar">
+      <i :style="{ width: `${groups.length ? (geoDone / groups.length) * 100 : 0}%` }" />
+      <span>定位中 {{ geoDone }}/{{ groups.length }}</span>
+    </div>
+
     <!-- 高德 Key 提示 -->
     <div v-if="amapNotice" class="notice">{{ amapNotice }}</div>
 
     <!-- 图例 + 定位进度 -->
     <div class="legend">
       <span v-for="(st, k) in STATES" :key="k"><i class="dot" :style="{ background: st.color }" />{{ st.label }}</span>
-      <span><i class="dot approx" />虚线 = 区县中心（近似）</span>
+      <span class="muted-l">仅显示已确认位置</span>
       <span class="muted-l">缩放 ≥ 12 级显示小区</span>
       <span v-if="AMapRef && geoPending > 0" class="progress">定位中 {{ geoDone }}/{{ groups.length }}</span>
     </div>
@@ -71,14 +77,15 @@
 
       <div class="card scope">
         <div>账号：{{ userName }}<span class="tag">{{ scopeKind }}</span></div>
+        <div v-if="AMapRef">已定位 {{ locatedCount }} / 共 {{ groups.length }} 个小区</div>
         <div>
-          已加载 {{ allProjects.length }} 个项目<template v-if="totalVisible > allProjects.length">（账号可见共 {{ totalVisible }} 个，{{ FETCH_ALL ? '' : '试用仅取第 1 页' }}）</template>
+          已加载 {{ allProjects.length }} 个项目<template v-if="totalVisible > allProjects.length">（账号可见共 {{ totalVisible }} 个，{{ FETCH_ALL ? '加载中…' : '试用仅取第 1 页' }}）</template>
         </div>
       </div>
 
       <div class="kpis">
         <div v-for="k in kpis" :key="k.label" class="kpi">
-          <b>{{ k.value }}</b><span>{{ k.label }}</span>
+          <b>{{ k.value }}</b><span>{{ k.label }}</span><small v-if="k.sub">{{ k.sub }}</small>
         </div>
       </div>
 
@@ -130,12 +137,17 @@
       <TechPanel :title="`待校正（${needFix.length}）`" variant="13" :background-color="PANEL_BG" style="height: 300px">
         <p v-if="!AMapRef" class="muted">接入高德 Key 后自动定位到小区；未能匹配的小区会列在这里。</p>
         <template v-else>
-          <p class="muted">以下小区未精确匹配，暂显示在区县中心。可在 public/geo-overrides.json 中按「查询串 → [经度, 纬度]」校正。</p>
+          <p class="muted">
+            以下小区未能确认位置，不在地图上显示。请在云平台修改项目名称/地址后点「重新定位待校正」。
+            <button class="mini" :disabled="geoPending > 0 || !needFix.length" @click="retryNeedFix">重新定位待校正</button>
+            <button v-if="IS_DEV" class="mini" :disabled="geoPending > 0" @click="downloadSeed">导出已确认坐标</button>
+          </p>
           <ul class="list fix">
             <li v-for="g in needFix" :key="g.key">
               <span class="name">{{ g.community || '名称无法识别小区' }}</span>
               <span class="meta">{{ g.districtName }} · {{ g.count }} 个 · {{ g.reason }}</span>
-              <code v-if="g.queries[0]">{{ g.queries[0] }}</code>
+              <span class="meta">项目：{{ g.projects.map((p) => p.name).join('、') }}</span>
+              <span class="meta">高德返回：{{ g.returned ? [g.returned.name, g.returned.address].filter(Boolean).join(' · ') : '未找到' }}</span>
             </li>
             <li v-if="!needFix.length" class="empty">全部已定位</li>
           </ul>
@@ -157,7 +169,7 @@ import { session } from '@/api/session'
 import { useTokenRefresh } from '@/composables/useTokenRefresh'
 import { toProject } from '@/geo/model'
 import { hasAmapKey, loadAmap } from '@/geo/amap'
-import { loadOverrides, lookupLocal, createGeocodeQueue, jitter } from '@/geo/geocoder'
+import { loadOverrides, loadSeed, lookupLocal, forgetFailures, exportSeed, seedKey, createGeocodeQueue, jitter } from '@/geo/geocoder'
 import { regionInfo } from '@/utils/region'
 import { STATES, applyStates, fakeStates } from '@/geo/states'
 import { fmtNumber, fmtArea } from '@/utils/format'
@@ -188,7 +200,11 @@ const AMapRef = shallowRef(null)
 const amapNotice = ref(hasAmapKey() ? '' : '缺少高德 Key：请在 .env.local 配置 VITE_AMAP_KEY / VITE_AMAP_SECURITY 后重启。当前以区县中心近似显示。')
 const geoResults = reactive({}) // groupKey → { lnglat, level, source } | { fail, reason }
 const overrides = shallowRef({})
+const seed = shallowRef({})
+let geoReady = false // overrides + seed 加载完才开始查，避免浪费配额
 let queue = null
+const queuedKeys = new Set()
+const retryKeys = new Set() // 「重新定位」过的小区：忽略种子里的未确认记录
 
 // ---------- 范围 ----------
 const regionFilter = computed(() => (typeof route.query.region === 'string' ? route.query.region : ''))
@@ -221,7 +237,8 @@ const center = computed(() => {
   return c ? [c.lng, c.lat] : null
 })
 
-const cityProjects = computed(() => allProjects.value.filter((p) => p.city === cityCode.value))
+// 默认「全部」：账号可见的全部项目；选城市后在前端过滤（全量模式下不重新请求）
+const cityProjects = computed(() => (regionFilter.value ? allProjects.value.filter((p) => p.city === cityCode.value) : allProjects.value))
 
 const distributorOptions = computed(() => {
   const m = new Map()
@@ -258,6 +275,7 @@ const groups = computed(() => {
         keywords: p.keywords,
         geoCity: p.geoCity,
         city: p.city,
+        cityName: p.cityName,
         district: p.district,
         districtName: p.districtName,
         count: 0,
@@ -292,15 +310,16 @@ function fallbackPos(g) {
   return jitter(base, g.key)
 }
 
-// 每个小区一个标记：精确坐标或区县中心兜底
+// 每个「已确认」小区一个标记；未确认的不上图（只进待校正）
 const communities = computed(() =>
-  groups.value.map((g) => {
+  groups.value
+    .filter((g) => geoResults[g.key]?.lnglat)
+    .map((g) => {
     const r = geoResults[g.key]
-    const exact = Boolean(r && r.lnglat)
     return {
       key: g.key,
-      lnglat: exact ? r.lnglat : fallbackPos(g),
-      exact,
+      lnglat: r.lnglat,
+      exact: true,
       label: g.community || '未识别小区',
       district: g.district,
       districtName: g.districtName,
@@ -338,10 +357,15 @@ const fallbackPoints = computed(() =>
 
 const geoDone = computed(() => groups.value.filter((g) => geoResults[g.key] || !g.queries.length).length)
 const geoPending = computed(() => groups.value.length - geoDone.value)
+const locatedCount = computed(() => groups.value.filter((g) => geoResults[g.key]?.lnglat).length)
 const needFix = computed(() =>
   groups.value
     .filter((g) => !g.queries.length || geoResults[g.key]?.fail)
-    .map((g) => ({ ...g, reason: g.queries.length ? geoResults[g.key].reason : '名称中没有可识别的小区名' }))
+    .map((g) => ({
+      ...g,
+      reason: g.queries.length ? geoResults[g.key].reason : '名称中没有可识别的小区名',
+      returned: g.queries.length ? geoResults[g.key].returned : null,
+    }))
     .sort((a, b) => b.count - a.count)
 )
 
@@ -349,13 +373,21 @@ const needFix = computed(() =>
 const kpis = computed(() => {
   const ps = projects.value
   const exact = groups.value.filter((g) => geoResults[g.key]?.lnglat).length
+  // 试用（只取第 1 页）时：项目数 = 接口 total（账号真实总数），其余合计只来自已加载项目
+  const partial = totalVisible.value > allProjects.value.length
+  const tag = partial ? '（已加载项目）' : ''
+  const filtered = Boolean(regionFilter.value || distributorFilter.value) && FETCH_ALL
   return [
-    { label: '项目数', value: fmtNumber(ps.length) },
-    { label: '小区数', value: fmtNumber(groups.value.filter((g) => g.community).length) },
-    { label: '建筑面积', value: fmtArea(ps.reduce((s, p) => s + p.area, 0)) },
-    { label: '房间数', value: fmtNumber(ps.reduce((s, p) => s + p.rooms, 0)) },
-    { label: '设备数', value: fmtNumber(ps.reduce((s, p) => s + p.devices, 0)) },
-    { label: '小区定位率', value: AMapRef.value && groups.value.length ? `${Math.round((exact / groups.value.length) * 100)}%` : '—' },
+    partial
+      ? { label: '项目数', value: fmtNumber(totalVisible.value), sub: `已加载 ${allProjects.value.length}` }
+      : filtered
+        ? { label: '项目数', value: fmtNumber(ps.length), sub: `${regionFilter.value ? cityName.value : ''}${distributorFilter.value ? ' · 所选经销商' : ''} / 共 ${fmtNumber(allProjects.value.length)}` }
+        : { label: '项目数', value: fmtNumber(ps.length) },
+    { label: `小区数${tag}`, value: fmtNumber(groups.value.filter((g) => g.community).length) },
+    { label: `建筑面积${tag}`, value: fmtArea(ps.reduce((s, p) => s + p.area, 0)) },
+    { label: `房间数${tag}`, value: fmtNumber(ps.reduce((s, p) => s + p.rooms, 0)) },
+    { label: `设备数${tag}`, value: fmtNumber(ps.reduce((s, p) => s + p.devices, 0)) },
+    { label: '已定位 / 共计小区', value: AMapRef.value ? `${exact} / ${groups.value.length}` : '—' },
   ]
 })
 
@@ -467,18 +499,38 @@ async function loadProfile() {
   }
 }
 
+let loadSeq = 0
 async function loadProjects() {
+  const seq = ++loadSeq
+  const stale = () => seq !== loadSeq
   loading.value = true
   loadError.value = ''
   try {
     let raw
     if (endpoint && FETCH_ALL) {
-      raw = await listAllProjects(endpoint, { region: regionFilter.value })
-      totalVisible.value = raw.length
+      // 渐进加载：每页到达就并入（统计与已缓存点位立即可见），其余页在后台继续取
+      allProjects.value = []
+      distributorFilter.value = ''
+      const seen = new Set()
+      await listAllProjects(endpoint, {
+        region: '', // 全量取一次，城市筛选在前端做
+        limit: PAGE_SIZE,
+        concurrency: 3,
+        isStale: stale,
+        onPage: (list, total) => {
+          if (stale()) return
+          totalVisible.value = parseInt(total, 10) || 0
+          const add = list.filter((p) => !seen.has(p.id) && seen.add(p.id)).map(toProject)
+          allProjects.value = allProjects.value.concat(add)
+          loading.value = false
+        },
+      })
+      if (!stale()) totalVisible.value = allProjects.value.length
+      return
     } else if (endpoint) {
       const r = await projectPage(endpoint, { page: 1, limit: PAGE_SIZE, region: regionFilter.value })
       raw = r.list
-      totalVisible.value = r.total
+      totalVisible.value = parseInt(r.total, 10) || r.list.length // total 为字符串（如 "702"）
     } else {
       const all = await listProjectsLegacy({ region: regionFilter.value })
       totalVisible.value = all.length
@@ -519,15 +571,46 @@ async function loadDistributorNames() {
   }
 }
 
+// 只重查「待校正」里的小区（平台上改了名称之后用）
+function retryNeedFix() {
+  const list = needFix.value.filter((g) => g.queries.length)
+  forgetFailures(list.flatMap((g) => g.queries))
+  for (const g of list) {
+    delete geoResults[g.key]
+    queuedKeys.delete(g.key)
+    retryKeys.add(g.key)
+  }
+  geocodeGroups()
+}
+
+// 开发用：导出已确认坐标为 public/geo-seed.json
+function downloadSeed() {
+  const entries = []
+  for (const g of groups.value) {
+    const r = geoResults[g.key]
+    if (!r || r.source === 'override' || !g.queries.length) continue
+    if (r.lnglat) entries.push([seedKey(g.district, r.query), r.lnglat])
+    else if (r.fail && !r.transient) entries.push([seedKey(g.district, g.queries[0]), { f: r.reason, ret: r.returned || null }])
+  }
+  const blob = new Blob([JSON.stringify(exportSeed(entries), null, 1)], { type: 'application/json' })
+  const a = document.createElement('a')
+  a.href = URL.createObjectURL(blob)
+  a.download = 'geo-seed.json'
+  a.click()
+  URL.revokeObjectURL(a.href)
+}
+
 function geocodeGroups() {
+  if (!geoReady) return
   for (const g of groups.value) {
     if (geoResults[g.key] || !g.queries.length) continue
-    const local = lookupLocal(g.queries, overrides.value)
+    const local = lookupLocal(g.queries, overrides.value, seed.value, g.district, { ignoreSeedFail: retryKeys.has(g.key) })
     if (local) geoResults[g.key] = local
   }
   if (!queue) return
-  const todo = groups.value.filter((g) => !geoResults[g.key] && g.queries.length && !g._queued)
-  todo.forEach((g) => (g._queued = true))
+  // groups 会随分页到达重新计算（新对象），用 key 集合去重，避免重复排队
+  const todo = groups.value.filter((g) => !geoResults[g.key] && g.queries.length && !queuedKeys.has(g.key))
+  todo.forEach((g) => queuedKeys.add(g.key))
   queue.add(todo)
 }
 
@@ -560,6 +643,10 @@ function logout() {
 }
 
 watch(regionFilter, async () => {
+  if (FETCH_ALL && endpoint) {
+    distributorFilter.value = '' // 全量模式：城市筛选纯前端
+    return
+  }
   await loadProjects()
 })
 watch(cityCode, (c) => loadGeojson(c))
@@ -572,8 +659,10 @@ onMounted(async () => {
   } catch (e) {
     loadError.value = `账号信息获取失败：${e?.response?.data?.message || e?.message}`
   }
-  const [ov] = await Promise.all([loadOverrides(), initAmap(), loadProjects()])
+  const [ov, sd] = await Promise.all([loadOverrides(), loadSeed(), initAmap(), loadProjects()])
   overrides.value = ov
+  seed.value = sd
+  geoReady = true
   loadGeojson(cityCode.value)
   geocodeGroups()
 })
@@ -725,6 +814,48 @@ onBeforeUnmount(() => {
   z-index: 10;
 }
 
+.mini {
+  margin-left: 6px;
+  padding: 1px 8px;
+  font-size: 11px;
+  color: #cfeaff;
+  background: rgba(0, 212, 255, 0.12);
+  border: 1px solid rgba(0, 212, 255, 0.4);
+  border-radius: 4px;
+  cursor: pointer;
+  &:disabled {
+    opacity: 0.4;
+    cursor: default;
+  }
+}
+.geo-bar {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 3px;
+  z-index: 30;
+  background: rgba(0, 212, 255, 0.12);
+  i {
+    display: block;
+    height: 100%;
+    background: linear-gradient(90deg, #0090ff, #00d4ff);
+    box-shadow: 0 0 8px #00d4ff;
+    transition: width 0.3s;
+  }
+  span {
+    position: absolute;
+    top: 6px;
+    left: 50%;
+    transform: translateX(-50%);
+    padding: 2px 10px;
+    font-size: 12px;
+    color: #cfeaff;
+    background: rgba(3, 10, 26, 0.8);
+    border: 1px solid rgba(0, 212, 255, 0.3);
+    border-radius: 10px;
+  }
+}
 .legend {
   position: absolute;
   left: 24px;
@@ -827,6 +958,13 @@ onBeforeUnmount(() => {
       margin-top: 2px;
       font-size: 12px;
       color: #7ec7ff;
+      text-align: center;
+      line-height: 1.3;
+    }
+    small {
+      margin-top: 1px;
+      font-size: 11px;
+      color: #5f8fb8;
     }
   }
 }

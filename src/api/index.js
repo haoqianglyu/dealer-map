@@ -31,14 +31,17 @@ export function projectPage(endpoint, { page, limit, region }) {
     })
     .then((r) => ({
       list: r.data?.project_entities || r.data?.entities || [],
-      total: Number(r.data?.total) || 0,
+      total: parseInt(r.data?.total, 10) || 0, // total 为字符串（如 "702"）
     }))
 }
 
 // 翻页取完当前账号可见的全部项目（region 为空 = 全部；也可传 "省/市" 代码前缀）
-export async function listAllProjects(endpoint, { region = '', limit = 200, concurrency = 3, onProgress } = {}) {
+// onPage(list, total)：每取到一页立即回调，页面可渐进显示
+export async function listAllProjects(endpoint, { region = '', limit = 200, concurrency = 3, onProgress, onPage, isStale } = {}) {
   const first = await projectPage(endpoint, { page: 1, limit, region })
-  const pages = Math.ceil(first.total / limit)
+  onPage && onPage(first.list, first.total)
+  // 页数由 total 计算，不写死；翻页期间 total 变大则追加页，某页为空则提前结束
+  let pages = Math.ceil(first.total / limit)
   const out = [first.list]
   let loaded = first.list.length
   onProgress && onProgress(loaded, first.total)
@@ -46,9 +49,21 @@ export async function listAllProjects(endpoint, { region = '', limit = 200, conc
   const results = {}
   async function worker() {
     while (rest.length) {
+      if (isStale && isStale()) return
       const page = rest.shift()
       const r = await projectPage(endpoint, { page, limit, region })
+      if (isStale && isStale()) return
       results[page] = r.list
+      if (!r.list.length) {
+        rest.length = 0 // 空页：后面不会再有数据
+        continue
+      }
+      const newPages = Math.ceil(r.total / limit)
+      if (newPages > pages) {
+        for (let p = pages + 1; p <= newPages; p++) rest.push(p)
+        pages = newPages
+      }
+      onPage && onPage(r.list, r.total)
       loaded += r.list.length
       onProgress && onProgress(loaded, first.total)
     }

@@ -1,9 +1,78 @@
-// 小区级地理编码：overrides → localStorage 缓存 → 高德 Geocoder（限流）→ 区县中心兜底
-// 缓存 key = 归一化查询串（市+区+小区），只存坐标与匹配级别，不存任何项目/客户信息。
+// 小区级地理编码：overrides → localStorage 缓存 → 高德 Geocoder / POI 搜索（限流）
+// 只有「已确认」的结果才上地图：高德返回的名称/地址与归一化小区名一致（包含或相似度 ≥ 0.8），
+// 且落在项目所属区县 adcode 内。其余一律进「待校正」（不上图）。
+// 查找顺序：geo-overrides.json（人工）→ geo-seed.json（共享种子，新设备免查询）→ localStorage 缓存 → 高德。
+// 缓存 key = 归一化查询串（市+区+小区）；已确认永久缓存，未确认缓存 7 天（高德「基础搜索」月配额仅 5000 次），
+// 「重新定位待校正」按钮可强制重查。只存坐标/匹配级别/高德返回的名称地址，不存任何项目/客户信息。
 
-const CACHE_VERSION = 'v5'
+const CACHE_VERSION = 'v7'
 const CACHE_KEY = `dealer-map:geo:${CACHE_VERSION}`
-const FAIL_TTL = 7 * 24 * 3600 * 1000 // 未匹配结果 7 天后重试
+const FAIL_TTL = 7 * 24 * 3600 * 1000
+
+// ---------- 名称确认 ----------
+const SUFFIX_RE = /(小区|花园|家园|苑|[一二三四五六七八九十\d]+期|[A-Z东西南北一二三四五六七八九十\d]*区)+$/
+const PUNCT_RE = /[（(][^）)]*[）)]|[\s·•、,，.。\-－—_]+/g
+export const coreName = (n) => {
+  const s = String(n || '').replace(PUNCT_RE, '')
+  const c = s.replace(SUFFIX_RE, '')
+  return c.length >= 2 ? c : s
+}
+function similarity(a, b) {
+  // Levenshtein 比例
+  if (!a || !b) return 0
+  const m = a.length
+  const n = b.length
+  let prev = Array.from({ length: n + 1 }, (_, j) => j)
+  for (let i = 1; i <= m; i++) {
+    const cur = [i]
+    for (let j = 1; j <= n; j++) cur[j] = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1))
+    prev = cur
+  }
+  return 1 - prev[n] / Math.max(m, n)
+}
+// community：归一化小区名；candidates：高德返回的名称 / 地址（地址已去掉省市区前缀）
+export function namesMatch(community, candidates) {
+  const a = coreName(community)
+  if (a.length < 2) return false
+  return candidates.filter(Boolean).some((raw) => {
+    const full = String(raw).replace(PUNCT_RE, '')
+    const b = coreName(raw)
+    // 正向：高德名称/地址包含小区名（小区名至少 3 字，避免「金华」「武汉」这类泛称误命中）
+    if (a.length >= 3 && full.includes(a)) return true
+    // 反向：小区名包含高德名称——高德名称须足够长（≥3 字且占小区名 ≥ 65%），避免「印香山」→「香山」
+    if (b.length >= 3 && b.length / a.length >= 0.65 && a.includes(b)) return true
+    return similarity(a, b) >= 0.8
+  })
+}
+// 区县一致：有区县 adcode 时要求完全相同；只有市级时比较前 4 位
+function inDistrict(adcode, group) {
+  const want = String(group.district || group.city || '')
+  const got = String(adcode || '')
+  if (!want || !got) return false
+  return /00$/.test(want) && !group.district ? got.slice(0, 4) === want.slice(0, 4) : got === want
+}
+// 小区名开头带的市/区名（如「安州区典汇国际」「龙岩紫金山…」）不参与名称比对
+function stripPlace(name, g) {
+  const pre = [g.cityName, g.districtName]
+    .filter(Boolean)
+    .flatMap((n) => [n, n.length > 2 ? n.replace(/(市|区|县)$/, '') : ''])
+    .filter(Boolean)
+    .sort((a, b) => b.length - a.length)
+  let s = String(name || '')
+  let prev
+  do {
+    prev = s
+    for (const p of pre) if (s.startsWith(p) && s.length - p.length >= 2) s = s.slice(p.length)
+  } while (s !== prev)
+  return s
+}
+
+// 去掉「省市区」前缀，只留区县之后的部分（小区/道路名）
+function stripAdmin(addr, g) {
+  const a = String(addr || '')
+  const i = g.districtName ? a.indexOf(g.districtName) : -1
+  return i >= 0 ? a.slice(i + g.districtName.length) : a
+}
 
 // 认为是「小区级」可信的匹配级别；其余（区县/乡镇/道路/村庄…）视为未精确匹配
 export const GOOD_LEVELS = new Set(['兴趣点', '门牌号', '单元号', '道路交叉路口', '小区', '住宅区', '楼栋'])
@@ -56,18 +125,61 @@ export function loadOverrides() {
   return overridesP
 }
 
-// 不访问网络的查找：override 或有效缓存
-export function lookupLocal(queries, overrides) {
+// public/geo-seed.json：共享种子 { "区县adcode|归一化查询串": [lng, lat] | { f, ret } }，由开发环境「导出已确认坐标」生成
+let seedP = null
+export function loadSeed() {
+  if (!seedP) {
+    seedP = fetch(`${import.meta.env.BASE_URL}geo-seed.json`, { cache: 'no-cache' })
+      .then((r) => (r.ok ? r.json() : {}))
+      .catch(() => ({}))
+      .then((o) => {
+        const out = {}
+        for (const [k, v] of Object.entries(o || {})) {
+          if (k.startsWith('_')) continue
+          if (Array.isArray(v) && v.length === 2) out[k] = v.map(Number)
+          else if (v && v.f) out[k] = v // 已知未确认：{ f: 原因, ret: 高德返回 }，新设备也不重复查询
+        }
+        return out
+      })
+  }
+  return seedP
+}
+export const seedKey = (district, query) => `${district || ''}|${query}`
+
+// 不访问网络的查找：override → seed → 缓存（已确认；或 7 天内的未确认结果）
+export function lookupLocal(queries, overrides, seed = {}, district = '', { ignoreSeedFail = false } = {}) {
   const c = loadCache()
   for (const q of queries) {
     if (overrides[q]) return { lnglat: overrides[q], level: '人工校正', source: 'override', query: q }
   }
   for (const q of queries) {
-    const hit = c[q]
-    if (hit?.p) return { lnglat: hit.p, level: hit.l, source: 'cache', query: q }
+    const hit = seed[seedKey(district, q)]
+    if (Array.isArray(hit)) return { lnglat: hit, level: '种子', source: 'seed', query: q }
   }
-  const allFailed = queries.length > 0 && queries.every((q) => c[q]?.f && Date.now() - c[q].t < FAIL_TTL)
-  return allFailed ? { fail: true, reason: c[queries[0]].r || '未匹配到小区' } : null
+  for (const q of queries) {
+    const hit = c[q]
+    if (hit?.p) return { lnglat: hit.p, level: hit.l, matched: hit.n || '', source: 'cache', query: q }
+  }
+  const key = queries[0]
+  const f = key && c[key]
+  if (f?.f && Date.now() - f.t < FAIL_TTL) return { fail: true, reason: f.r, returned: f.ret || null, source: 'cache' }
+  const sf = !ignoreSeedFail && key && seed[seedKey(district, key)]
+  if (sf?.f) return { fail: true, reason: sf.f, returned: sf.ret || null, source: 'seed', query: key }
+  return null
+}
+
+// 「重新定位待校正」：删掉这些查询串的未确认缓存
+export function forgetFailures(queries) {
+  const c = loadCache()
+  for (const q of queries) if (c[q]?.f) delete c[q]
+  saveCache()
+}
+
+// 开发用：把已确认结果导出为 geo-seed.json 格式
+export function exportSeed(entries) {
+  const out = { _readme: '共享定位种子：key = 区县adcode|归一化查询串（市+区+小区，无户号），value = [lng, lat]（GCJ-02）。由开发环境「导出已确认坐标」生成。' }
+  for (const [k, v] of entries.sort((a, b) => a[0].localeCompare(b[0], 'zh'))) out[k] = v
+  return out
 }
 
 const KEY_ERRORS = /KEY|PLAT|SIGNATURE|DOMAIN|SECURITY|OVER_LIMIT|OVER_QUOTA|ACCESS_TOO_FREQUENT|IP_QUERY/i
@@ -85,17 +197,6 @@ function withTimeout(run, ms = 8000) {
 const geocodeOnce = (geocoder, query) => withTimeout((cb) => geocoder.getLocation(query, cb))
 const searchOnce = (placeSearch, keyword) => withTimeout((cb) => placeSearch.search(keyword, cb))
 
-// POI 结果里优先取名称包含小区名、类型为住宅的那条
-function pickPoi(pois, keyword, city) {
-  // extensions:'base' 的 POI 不带 adcode；搜索已用 citylimit 限定在区县内，有 adcode 时再校验一次
-  const inCity = (pois || []).filter((p) => p.location && (!p.adcode || String(p.adcode).slice(0, 4) === String(city).slice(0, 4)))
-  // 名称必须互相包含（如「万科城市花园」↔「万科城市花园二区」），否则视为没搜到，避免误定位
-  const core = (n) => String(n || '').replace(/[(（].*$/, '').replace(/([一二三四五六七八九十\d]+期|[A-Z东西南北一二三四五六七八九十\d]+区)$/, '')
-  const nameMatch = (p) => String(p.name).includes(keyword) || (core(p.name).length >= 2 && keyword.includes(core(p.name)))
-  const score = (p) => (String(p.name).startsWith(keyword) ? 2 : 0) + (/住宅|小区|别墅/.test(p.type || '') ? 1 : 0)
-  return inCity.filter(nameMatch).sort((a, b) => score(b) - score(a))[0] || null
-}
-
 // 创建限流队列：并发 ≤ concurrency，每个请求后间隔 gap 毫秒
 export function createGeocodeQueue(AMap, { concurrency = 3, gap = 200, onResult, onFatal } = {}) {
   const geocoders = new Map() // 每个区县 adcode 一个 Geocoder（city 参数限定匹配范围）
@@ -105,7 +206,7 @@ export function createGeocodeQueue(AMap, { concurrency = 3, gap = 200, onResult,
   }
   const searchers = new Map() // 小区名 POI 搜索（Geocoder 只给到区县/道路级时的兜底），限定在本区县
   const getSearcher = (city) => {
-    if (!searchers.has(city)) searchers.set(city, new AMap.PlaceSearch({ city: city || '全国', citylimit: Boolean(city), pageSize: 5, extensions: 'base' }))
+    if (!searchers.has(city)) searchers.set(city, new AMap.PlaceSearch({ city: city || '全国', citylimit: Boolean(city), pageSize: 5, extensions: 'all' }))
     return searchers.get(city)
   }
   const fatal = (status, result) => {
@@ -121,50 +222,69 @@ export function createGeocodeQueue(AMap, { concurrency = 3, gap = 200, onResult,
   let stopped = false
   const c = loadCache()
 
+  const sleep = () => new Promise((r) => setTimeout(r, gap))
+  const pt = (loc) => {
+    const l = Array.isArray(loc) ? { lng: loc[0], lat: loc[1] } : loc
+    return [Number(Number(l.lng).toFixed(6)), Number(Number(l.lat).toFixed(6))]
+  }
+  const confirm = (q, p, level, matched) => {
+    c[q] = { p, l: level, n: matched, t: Date.now() }
+    saveCache()
+    return { lnglat: p, level, matched, source: 'amap', query: q }
+  }
+
   async function resolveGroup(group) {
-    let lastReason = '未匹配到小区'
+    let best = null // 未确认时展示「高德返回了什么」：{ name, address, adcode, why }
     let transient = false
-    for (const q of group.queries) {
+    const note = (cand) => {
+      if (!best || (!best.name && cand.name)) best = cand
+    }
+    // 第一步：Geocoder（限定区县）
+    for (const [i, q] of group.queries.entries()) {
+      const kw = stripPlace(group.keywords?.[i] || group.community, group)
       const { status, result } = await geocodeOnce(getGeocoder(group.geoCity), q)
-      await new Promise((r) => setTimeout(r, gap))
+      await sleep()
       if (fatal(status, result)) return null
       if (status === 'error') {
         transient = true
-        lastReason = `高德返回错误 ${typeof result === 'string' ? result : result?.info}`
-        continue // 临时错误：不写缓存
+        note({ why: `高德返回错误 ${typeof result === 'string' ? result : result?.info || ''}`.trim() })
+        continue
       }
       const g = status === 'complete' ? result?.geocodes?.[0] : null
-      const sameCity = g && group.city && String(g.adcode || '').slice(0, 4) === String(group.city).slice(0, 4)
-      if (g && GOOD_LEVELS.has(g.level) && sameCity) {
-        const p = [Number(g.location.lng.toFixed(6)), Number(g.location.lat.toFixed(6))]
-        c[q] = { p, l: g.level, t: Date.now() }
-        saveCache()
-        return { lnglat: p, level: g.level, source: 'amap', query: q }
-      }
-      lastReason = g ? (sameCity ? `匹配级别过粗（${g.level}）` : '匹配结果不在本市') : '未匹配到小区'
+      if (!g) continue
+      const addr = g.formattedAddress || g.formatted_address || '' // JS API 2.0 为 formattedAddress
+      const tail = stripAdmin(addr, group)
+      const okDistrict = inDistrict(g.adcode, group)
+      const okLevel = GOOD_LEVELS.has(g.level)
+      const okName = okLevel && namesMatch(kw, [tail])
+      if (okDistrict && okName) return confirm(q, pt(g.location), g.level, tail)
+      note({ name: '', address: addr, adcode: g.adcode, why: !okLevel ? `仅匹配到${g.level}` : !okDistrict ? '不在本区' : '名称不一致' })
     }
     // 第二步：按小区名做 POI 搜索（限定区县）
     for (const [i, kw] of (group.keywords || []).entries()) {
       const q = group.queries[i]
       const { status, result } = await searchOnce(getSearcher(group.geoCity), kw)
-      await new Promise((r) => setTimeout(r, gap))
+      await sleep()
       if (fatal(status, result)) return null
-      if (status === 'error') transient = true
-      const poi = status === 'complete' ? pickPoi(result?.poiList?.pois, kw, group.city) : null
-      if (poi) {
-        const loc = Array.isArray(poi.location) ? { lng: poi.location[0], lat: poi.location[1] } : poi.location
-        const p = [Number(Number(loc.lng).toFixed(6)), Number(Number(loc.lat).toFixed(6))]
-        c[q] = { p, l: '兴趣点(POI)', t: Date.now() }
-        saveCache()
-        return { lnglat: p, level: '兴趣点(POI)', source: 'amap', query: q }
+      if (status === 'error') {
+        transient = true
+        note({ why: `高德返回错误 ${typeof result === 'string' ? result : result?.info || ''}`.trim() })
+        continue
       }
+      const pois = (status === 'complete' && result?.poiList?.pois) || []
+      const withLoc = pois.filter((p) => p.location)
+      const hit = withLoc.find((p) => inDistrict(p.adcode, group) && namesMatch(stripPlace(kw, group), [p.name]))
+      if (hit) return confirm(q, pt(hit.location), '兴趣点(POI)', hit.name)
+      const top = withLoc[0]
+      if (top) note({ name: top.name, address: [top.adname, top.address].filter((x) => x && typeof x === 'string').join(''), adcode: top.adcode, why: inDistrict(top.adcode, group) ? '名称不一致' : '不在本区' })
     }
-    lastReason += '；小区 POI 未找到'
-    if (!transient) {
-      for (const q of group.queries) c[q] = { f: 1, r: lastReason, t: Date.now() }
+    const returned = best && (best.name || best.address) ? { name: best.name || '', address: best.address || '' } : null
+    const reason = best?.why || '未找到'
+    if (!transient && group.queries[0]) {
+      c[group.queries[0]] = { f: 1, r: reason, ret: returned, t: Date.now() } // 未确认也缓存 7 天，省配额
       saveCache()
     }
-    return { fail: true, reason: lastReason }
+    return { fail: true, transient, returned, reason: reason + (transient ? '（高德临时错误，下次加载重试）' : '') }
   }
 
   function pump() {

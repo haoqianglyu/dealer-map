@@ -1,0 +1,21 @@
+name = "dealer-map"
+main = "worker/index.js"
+compatibility_date = "2026-10-01"
+workers_dev = false
+routes = [ { pattern = "dealermap.haoqianglyu.com", custom_domain = true } ]
+
+# 不开启 observability 日志（代理请求含 token / 账号数据）
+[observability]
+enabled = false
+
+[build]
+command = "VITE_AMAP_SECURITY= VITE_FETCH_ALL=true VITE_PAGE_SIZE=100 npm run build"
+
+[assets]
+directory = "./dist"
+binding = "ASSETS"
+not_found_handling = "single-page-application"
+run_worker_first = true
+
+# Secret（不在仓库）：AMAP_JSCODE — 高德安全密钥，经 /_AMapService 代理追加 jscode
+#   security find-generic-password -s chitu-amap-dealermap-security -w | npx wrangler secret put AMAP_JSCODE
