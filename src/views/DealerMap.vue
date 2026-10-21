@@ -89,9 +89,12 @@
         </div>
       </div>
 
-      <TechPanel title="各区项目" variant="13" :loading="loading" :background-color="PANEL_BG" :style="{ height: `${Math.max(150, districtStats.length * 24 + 72)}px` }">
+      <TechPanel :title="regionFilter ? '各区项目' : '各城市 / 区县项目'" variant="13" :loading="loading" :background-color="PANEL_BG" :style="{ height: `${Math.max(150, panelRows.length * 24 + 72)}px` }">
+        <div v-if="areaRows.length > TOP_AREAS" class="seg seg--panel">
+          <button class="on" @click="areasExpanded = !areasExpanded">{{ areasExpanded ? '收起' : `展开（${areaRows.length} 区）` }}</button>
+        </div>
         <div class="chart-box fill">
-          <EChart v-if="districtStats.length" :option="districtOption" />
+          <EChart v-if="panelRows.length" :option="districtOption" />
           <div v-else class="empty">暂无数据</div>
         </div>
       </TechPanel>
@@ -402,10 +405,38 @@ const districtStats = computed(() => {
   return [...m.values()].sort((a, b) => b.count - a.count)
 })
 
+// 侧栏：全部城市时先按城市汇总，再列前 8 个区县（可展开）；选了城市时只列区县
+const TOP_AREAS = 8
+const areasExpanded = ref(false)
+const areaRows = computed(() => {
+  const m = new Map()
+  for (const p of projects.value) {
+    const k = p.district || `${p.city}-none`
+    const o = m.get(k) || { name: regionFilter.value ? p.districtName : `${(p.cityName || '').replace(/市$/, '')}·${p.districtName}`, count: 0, area: 0 }
+    o.count++
+    o.area += p.area
+    m.set(k, o)
+  }
+  return [...m.values()].sort((a, b) => b.count - a.count)
+})
+const panelRows = computed(() => {
+  const areas = areasExpanded.value ? areaRows.value : areaRows.value.slice(0, TOP_AREAS)
+  if (regionFilter.value) return areas
+  const m = new Map()
+  for (const p of projects.value) {
+    const k = p.city || 'none'
+    const o = m.get(k) || { name: p.cityName || '未知城市', count: 0, area: 0, city: true }
+    o.count++
+    o.area += p.area
+    m.set(k, o)
+  }
+  return [...[...m.values()].sort((a, b) => b.count - a.count), ...areas]
+})
+
 const districtOption = computed(() => {
-  const data = [...districtStats.value].reverse()
+  const data = [...panelRows.value].reverse()
   return {
-    grid: { left: 64, right: 40, top: 8, bottom: 8 },
+    grid: { left: regionFilter.value ? 64 : 92, right: 40, top: 8, bottom: 8 },
     tooltip: {
       ...tooltipStyle,
       trigger: 'axis',
@@ -420,7 +451,11 @@ const districtOption = computed(() => {
     series: [
       {
         type: 'bar',
-        data: data.map((d) => d.count),
+        data: data.map((d) =>
+          d.city
+            ? { value: d.count, itemStyle: { color: { type: 'linear', x: 0, y: 0, x2: 1, y2: 0, colorStops: [{ offset: 0, color: '#b8860b' }, { offset: 1, color: '#ffc722' }] } } }
+            : d.count
+        ),
         barWidth: 10,
         itemStyle: {
           borderRadius: [0, 4, 4, 0],
@@ -589,7 +624,7 @@ function downloadSeed() {
   for (const g of groups.value) {
     const r = geoResults[g.key]
     if (!r || r.source === 'override' || !g.queries.length) continue
-    if (r.lnglat) entries.push([seedKey(g.district, r.query), r.lnglat])
+    if (r.lnglat) entries.push([seedKey(g.district, r.query), r.matched ? { p: r.lnglat, n: r.matched } : r.lnglat])
     else if (r.fail && !r.transient) entries.push([seedKey(g.district, g.queries[0]), { f: r.reason, ret: r.returned || null }])
   }
   const blob = new Blob([JSON.stringify(exportSeed(entries), null, 1)], { type: 'application/json' })
@@ -604,7 +639,7 @@ function geocodeGroups() {
   if (!geoReady) return
   for (const g of groups.value) {
     if (geoResults[g.key] || !g.queries.length) continue
-    const local = lookupLocal(g.queries, overrides.value, seed.value, g.district, { ignoreSeedFail: retryKeys.has(g.key) })
+    const local = lookupLocal(g, overrides.value, seed.value, { ignoreSeedFail: retryKeys.has(g.key) })
     if (local) geoResults[g.key] = local
   }
   if (!queue) return

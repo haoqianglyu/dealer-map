@@ -12,8 +12,18 @@ const PRODUCT_RE = /三管制|三管式|空气系统|新风系统|新风|三恒|
 const GENERIC = new Set(['仓库', '公司', '工厂', '车间', '门店', '机房', '设备间', '地下室', '长期'])
 const NOISE_RE = /[（(][^）)]*[）)]|[\s.。·•、,，:：;；'"“”‘’/\\|]+/g
 
+// 分期/分区是不同小区，必须保留：先把「3期」「2区」转成中文数字，避免被下面的「数字处截断」切掉
+const CN_D = '零一二三四五六七八九'
+const cnNum = (d) => {
+  const n = Number(d)
+  if (n > 99) return d
+  if (n <= 10) return n === 10 ? '十' : CN_D[n]
+  return (n >= 20 ? CN_D[Math.floor(n / 10)] : '') + '十' + (n % 10 ? CN_D[n % 10] : '')
+}
+
 export function communityName(raw) {
   let s = String(raw || '').replace(NOISE_RE, '').replace(PRODUCT_RE, '')
+  s = s.replace(/(\d{1,2})(期|区)/g, (_, d, t) => cnNum(d) + t)
   const idx = s.search(CUT_RE)
   if (idx >= 0) s = s.slice(0, idx)
   let prev
