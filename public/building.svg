@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 110" role="img" aria-label="建筑示意">
+  <defs>
+    <linearGradient id="g" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#e9eef3"/><stop offset="1" stop-color="#b9c3cd"/></linearGradient>
+    <linearGradient id="w" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#3a4a5c"/><stop offset="1" stop-color="#1c2633"/></linearGradient>
+  </defs>
+  <rect x="0" y="100" width="240" height="10" fill="#5d6b78"/>
+  <rect x="14" y="30" width="212" height="70" fill="url(#g)"/>
+  <rect x="8" y="24" width="224" height="7" fill="#f4f7fa"/>
+  <rect x="30" y="8" width="150" height="17" fill="url(#g)"/>
+  <rect x="24" y="4" width="162" height="5" fill="#f4f7fa"/>
+  <g fill="url(#w)">
+    <rect x="40" y="12" width="18" height="11"/><rect x="66" y="12" width="18" height="11"/><rect x="92" y="12" width="18" height="11"/><rect x="118" y="12" width="18" height="11"/><rect x="144" y="12" width="18" height="11"/>
+    <rect x="22" y="38" width="22" height="22"/><rect x="52" y="38" width="22" height="22"/><rect x="82" y="38" width="22" height="22"/><rect x="112" y="38" width="22" height="22"/><rect x="142" y="38" width="22" height="22"/><rect x="172" y="38" width="22" height="22"/><rect x="200" y="38" width="18" height="22"/>
+    <rect x="22" y="70" width="22" height="30"/><rect x="52" y="70" width="22" height="30"/><rect x="82" y="70" width="36" height="30"/><rect x="126" y="70" width="22" height="30"/><rect x="156" y="70" width="22" height="30"/><rect x="186" y="70" width="32" height="30"/>
+  </g>
+  <g stroke="#8995a1" stroke-width="1"><line x1="14" y1="64" x2="226" y2="64"/><line x1="14" y1="66" x2="226" y2="66"/></g>
+  <g fill="#4f7a4a"><circle cx="6" cy="96" r="7"/><circle cx="232" cy="95" r="8"/></g>
+</svg>

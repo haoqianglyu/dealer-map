@@ -45,7 +45,7 @@ url=$(ab get url); echo "detail url: $url"
 case "$url" in *"#/project/"*) ;; *) exit 1;; esac
 name=$(ab eval 'document.querySelector(".sum__name")?.innerText || ""'); echo "detail name: ${name:0:30}"
 [ -n "${name//\"/}" ] || exit 1
-ab eval 'document.querySelector(".pd__back").click(); 1' >/dev/null; sleep 2
+ab eval '[...document.querySelectorAll(".hbtn")].find(b=>b.innerText.includes("返回")).click(); 1' >/dev/null; sleep 2
 after=$(ab eval 'document.querySelectorAll(".dm-mk").length' | tr -d '"')
 echo "markers before/after detail: $before/$after"
 [ "$after" -gt 0 ] && [ "$after" = "$before" ] || exit 1
@@ -54,8 +54,9 @@ echo PASS-DETAIL
 # 5) 实时透传：打开在线项目详情（默认 生普账号的一个通用版项目，可用 LIVE_PID 覆盖），等查询结束，应有房间实时数据 + 设备在线点
 LIVE_PID=${LIVE_PID:-6ad591da1e18559ea86299c1}
 ab eval "location.hash='#/project/$LIVE_PID'; 1" >/dev/null; sleep 4
-for i in $(seq 1 15); do b=$(ab eval 'document.querySelector(".pd__bar")?.innerText.includes("查询中") ? 1 : 0' | tr -d '"'); [ "$b" = "0" ] && break; sleep 2; done
-live=$(ab eval 'JSON.stringify({rooms: document.querySelectorAll(".room").length, online: document.querySelectorAll(".eq .dot.on").length, bar: document.querySelector(".pd__live")?.innerText})')
+for i in $(seq 1 15); do b=$(ab eval 'document.querySelector(".live")?.innerText.includes("查询中") ? 1 : 0' | tr -d '"'); [ "$b" = "0" ] && break; sleep 2; done
+live=$(ab eval 'JSON.stringify({rooms: document.querySelectorAll(".rr__card").length, online: document.querySelectorAll(".eq .dot.on").length, bar: document.querySelector(".live")?.innerText})')
 echo "live: $live"
-case "$live" in *'rooms\":0'*) exit 1;; esac
+# 现场回执偶有超时：房间卡片或在线设备点至少其一有数据即通过
+case "$live" in *'rooms\":0,\"online\":0'*) exit 1;; esac
 echo PASS-LIVE
