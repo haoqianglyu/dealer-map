@@ -1,3 +1,36 @@
+/* 数字字体：Barlow Semi Condensed（开源，仅拉丁/数字区段，按需下载），各平台一致 */
+@font-face {
+  font-family: 'DM Num';
+  font-weight: 500;
+  font-display: swap;
+  src: url('@fontsource/barlow-semi-condensed/files/barlow-semi-condensed-latin-500-normal.woff2') format('woff2');
+  unicode-range: U+0020-007E;
+}
+@font-face {
+  font-family: 'DM Num';
+  font-weight: 600;
+  font-display: swap;
+  src: url('@fontsource/barlow-semi-condensed/files/barlow-semi-condensed-latin-600-normal.woff2') format('woff2');
+  unicode-range: U+0020-007E;
+}
+
+:root {
+  /* 主题 token（浅色主题只需替换这些值 + 高德底图样式 + logo 滤镜） */
+  --dm-bg: #040b18;
+  --dm-panel: rgba(6, 16, 36, 0.82);
+  --dm-line: rgba(120, 170, 255, 0.14);
+  --dm-text: #f2f7ff;
+  --dm-text-2: #b7d3f0;
+  --dm-text-3: #8fb0d0;
+  --dm-accent: #35d4ff;
+  --dm-ok: #00e2a1;
+  --dm-warn: #ffc722;
+  --dm-alarm: #ff4d4f;
+  --dm-heat-halo: #ffb857;
+  --dm-font: 'PingFang SC', 'Microsoft YaHei', 'Noto Sans SC', 'Helvetica Neue', Arial, sans-serif;
+  --dm-num: 'DM Num', 'DIN Alternate', 'Bahnschrift', var(--dm-font);
+}
+
 * {
   margin: 0;
   padding: 0;
@@ -10,20 +43,25 @@ body,
   width: 100%;
   height: 100%;
   overflow: hidden;
-  background: #04070f;
+  background: #040b18;
 }
 
 body {
-  font-family: 'PingFang SC', 'Microsoft YaHei', 'Helvetica Neue', Arial, sans-serif;
+  font-family: var(--dm-font);
   -webkit-font-smoothing: antialiased;
 }
 
-/* 大屏统一滚动条样式（基本用不到，兜底） */
 ::-webkit-scrollbar {
   width: 4px;
   height: 4px;
 }
 ::-webkit-scrollbar-thumb {
-  background: rgba(0, 212, 255, 0.3);
+  background: rgba(53, 212, 255, 0.3);
   border-radius: 2px;
+}
+
+/* 全站统一焦点环（键盘操作可见；鼠标点击不显示） */
+:focus-visible {
+  outline: 2px solid #35d4ff;
+  outline-offset: 2px;
 }

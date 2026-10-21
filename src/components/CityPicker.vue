@@ -1,5 +1,5 @@
 <template>
-  <div ref="root" class="cp" :class="{ open }" @keydown="onKey">
+  <div ref="root" class="cp" :class="[{ open }, `cp--${variant}`]" @keydown="onKey">
     <button
       ref="btn"
       type="button"
@@ -13,9 +13,8 @@
       <i class="cp__caret" />
     </button>
     <div v-if="open" class="cp__panel">
-      <i class="cp__corner tl" /><i class="cp__corner tr" /><i class="cp__corner bl" /><i class="cp__corner br" />
       <input
-        v-if="options.length > 10"
+        v-if="options.length > 10 && expanded"
         ref="filterEl"
         v-model="q"
         class="cp__filter"
@@ -38,7 +37,8 @@
           <span v-if="o.count != null" class="cp__bar"><b :style="{ width: `${(o.count / max) * 100}%` }" /></span>
           <span v-if="o.count != null" class="cp__n">{{ o.count }}</span>
         </li>
-        <li v-if="!shown.length" class="cp__empty">无匹配城市</li>
+        <li v-if="hiddenCount" class="cp__more" @click.stop="expanded = true">更多{{ label }}（{{ hiddenCount }}）▾</li>
+        <li v-if="!shown.length" class="cp__empty">无匹配{{ label }}</li>
       </ul>
     </div>
   </div>
@@ -53,7 +53,10 @@ const props = defineProps({
   modelValue: { type: String, default: '' },
   options: { type: Array, default: () => [] }, // [{ value, label, count }]，第一项为「全部」
   label: { type: String, default: '城市' },
+  variant: { type: String, default: 'box' }, // box：普通下拉框 | title：顶栏标题样式（20px 粗体，无边框）
 })
+const TOP = 5 // 「全部」+ 数量前 4 名置顶，其余折叠为「更多」
+const expanded = ref(false)
 const emit = defineEmits(['update:modelValue'])
 
 const root = ref(null)
@@ -67,8 +70,13 @@ const active = ref(0)
 const current = computed(() => props.options.find((o) => o.value === props.modelValue) || props.options[0] || { label: '—' })
 const shown = computed(() => {
   const k = q.value.trim()
-  return k ? props.options.filter((o) => o.label.includes(k)) : props.options
+  if (k) return props.options.filter((o) => o.label.includes(k))
+  if (expanded.value || props.options.length <= TOP + 1) return props.options
+  const top = props.options.slice(0, TOP)
+  const sel = props.options.find((o) => o.value === props.modelValue)
+  return sel && !top.includes(sel) ? [...top, sel] : top
 })
+const hiddenCount = computed(() => (q.value.trim() ? 0 : props.options.length - shown.value.length))
 const max = computed(() => Math.max(1, ...props.options.map((o) => o.count || 0)))
 
 function toggle() {
@@ -77,6 +85,7 @@ function toggle() {
 async function show() {
   open.value = true
   q.value = ''
+  expanded.value = false
   active.value = Math.max(0, shown.value.findIndex((o) => o.value === props.modelValue))
   await nextTick()
   ;(filterEl.value || listEl.value)?.focus()
@@ -106,6 +115,7 @@ function onKey(e) {
     close()
   } else if (e.key === 'ArrowDown') {
     e.preventDefault()
+    if (active.value >= shown.value.length - 1 && hiddenCount.value) expanded.value = true // 到底自动展开「更多」
     active.value = Math.min(shown.value.length - 1, active.value + 1)
     scrollActive()
   } else if (e.key === 'ArrowUp') {
@@ -144,7 +154,7 @@ onBeforeUnmount(() => document.removeEventListener('pointerdown', onDoc))
   align-items: center;
   gap: 8px;
   min-width: 140px;
-  height: 28px;
+  height: 30px;
   padding: 0 10px;
   font: inherit;
   font-size: 13px;
@@ -182,12 +192,12 @@ onBeforeUnmount(() => document.removeEventListener('pointerdown', onDoc))
   top: calc(100% + 6px);
   right: 0;
   z-index: 50;
-  width: 260px;
-  padding: 8px 0;
+  width: 280px;
+  padding: 6px 0;
   background: var(--cp-bg);
   border: 1px solid var(--cp-border);
-  border-radius: 4px;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45), 0 0 14px rgba(0, 212, 255, 0.15);
+  border-radius: 10px;
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.45), 0 0 14px rgba(0, 212, 255, 0.15);
   backdrop-filter: blur(6px);
 }
 .cp__corner {
@@ -252,7 +262,8 @@ onBeforeUnmount(() => document.removeEventListener('pointerdown', onDoc))
     grid-template-columns: 1fr 70px 34px;
     align-items: center;
     gap: 8px;
-    padding: 5px 12px;
+    height: 36px;
+    padding: 0 14px;
     font-size: 13px;
     color: var(--cp-text);
     cursor: pointer;
@@ -280,7 +291,7 @@ onBeforeUnmount(() => document.removeEventListener('pointerdown', onDoc))
   b {
     display: block;
     height: 100%;
-    background: linear-gradient(90deg, #1b62d8, var(--cp-accent));
+    background: rgba(53, 212, 255, 0.35);
     border-radius: 2px;
   }
 }
@@ -288,6 +299,39 @@ onBeforeUnmount(() => document.removeEventListener('pointerdown', onDoc))
   text-align: right;
   font-family: 'DIN Alternate', 'Bahnschrift', monospace;
   color: var(--cp-muted);
+}
+.cp__list li.sel .cp__bar b {
+  background: var(--cp-accent);
+}
+.cp__list li.cp__more {
+  display: flex;
+  color: var(--cp-accent);
+  font-size: 12px;
+}
+.cp--title {
+  .cp__btn {
+    min-width: 0;
+    height: 36px;
+    padding: 0 8px;
+    gap: 10px;
+    font-size: 20px;
+    font-weight: 600;
+    color: var(--dm-text, #f2f7ff);
+    background: transparent;
+    border-color: transparent;
+    border-radius: 8px;
+    &:hover {
+      background: rgba(255, 255, 255, 0.06);
+      border-color: transparent;
+    }
+  }
+  .cp__caret {
+    border-top-color: var(--cp-muted);
+  }
+  .cp__panel {
+    left: 0;
+    right: auto;
+  }
 }
 .cp__empty {
   justify-content: center;
