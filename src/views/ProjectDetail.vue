@@ -8,7 +8,7 @@
         <i :class="['dot', online === true ? 'on' : online === false ? 'off' : '']" />{{ online === true ? '设备在线' : online === false ? '设备离线' : '' }}
         <template v-if="liveAt">· 实时数据 {{ fmtClock(liveAt) }}</template>
       </span>
-      <button class="pd__back" :disabled="liveBusy" @click="refreshLive">{{ liveBusy ? '查询中…' : '刷新' }}</button>
+      <button class="pd__back" :disabled="liveBusy" @click="refreshLive(true)">{{ liveBusy ? '查询中…' : '刷新' }}</button>
       <span v-if="showroom" class="pd__tag">展示模式</span>
     </header>
     <div v-if="error" class="pd__error">{{ error }}</div>
@@ -19,7 +19,26 @@
         <!-- ProjectSum -->
         <TechPanel class="p-sum" variant="13" :background-color="PANEL_BG" :loading="loading">
           <div class="sum">
-            <div class="sum__name">{{ title }}</div>
+            <div class="sum__top">
+              <div class="sum__name">{{ title }}</div>
+              <!-- 一级告警（dealer-map 新增；niuniu 无告警框，做成标题行内的紧凑条，不改变板块比例） -->
+              <div class="astrip" :class="{ on: activeAlarms > 0 }">
+                <button ref="astripBtn" class="astrip__btn" :aria-expanded="alarmOpen" @click="toggleAlarms">
+                  一级告警 · 10天 · 进行中 {{ activeAlarms }}/{{ alarms.length }}
+                  <span v-if="alarms[0]" class="astrip__last">最近 {{ fmtTs(alarms[0].ts) }} {{ alarms[0].device }} · {{ alarms[0].content }}</span>
+                </button>
+                <Teleport to="body">
+                <ul v-if="alarmOpen" class="astrip__list" :style="alarmPos" @keydown.esc="alarmOpen = false">
+                  <li v-for="a in alarms" :key="a.id" :class="{ on: isActiveAlarm(a) }">
+                    <span class="t">{{ fmtTs(a.ts) }}</span>
+                    <span class="d">{{ a.device }}</span>
+                    <span class="c">{{ a.content }}<small>{{ isActiveAlarm(a) ? '进行中' : a.status === 1 ? '已恢复' : '已处理' }}</small></span>
+                  </li>
+                  <li v-if="!alarms.length" class="empty">10 天内无一级告警</li>
+                </ul>
+                </Teleport>
+              </div>
+            </div>
             <div class="sum__cols">
               <div class="sum__col">
                 <div class="sum__h">项目信息</div>
@@ -47,15 +66,42 @@
           </div>
         </TechPanel>
 
-        <!-- RoomReal -->
-        <TechPanel class="p-real" :title="`房间实时数据${roomsLive.length ? `（${roomsLive.length}）` : ''}`" variant="13" :background-color="PANEL_BG">
-          <div v-if="roomsLive.length" class="rooms">
-            <div v-for="(r, i) in roomsLive" :key="r.id || i" class="room" :class="{ on: r.panelSwitch === '开' }" :title="roomTitle(r)">
-              <div class="room__h"><span class="idx">{{ String(i + 1).padStart(2, '0') }}</span><b>{{ r.name }}</b><em>{{ r.panelSwitch || '' }}</em></div>
-              <div class="room__v"><span>{{ fmt(r.currentTemperature, '°C') }}</span><span>{{ fmt(r.currentHumidity, '%') }}</span></div>
+        <!-- RoomReal（与 niuniu RoomReal.vue 同结构：每页 10 间 = 5 列 × 2 行，超过 10 间横向翻页 + 左右箭头） -->
+        <TechPanel class="p-real" variant="13" :background-color="PANEL_BG">
+          <div class="rr">
+            <div class="rr__title">房间实时情况</div>
+            <div class="rr__content">
+              <button v-if="roomsLive.length > 10" class="rr__nav l" :disabled="rrStart" aria-label="上一页" @click="rrScroll(-1)">‹</button>
+              <div ref="rrEl" class="rr__wrap" @scroll="rrCheck">
+                <div v-for="(page, pi) in roomPages" :key="pi" class="rr__page">
+                  <div v-for="(r, i) in page" :key="r.id || i" class="rr__card" :class="{ on: r.panelSwitch === '开' }" :title="roomTitle(r)">
+                    <div class="rr__head">
+                      <span class="rr__id">{{ String(pi * 10 + i + 1).padStart(2, '0') }}</span>
+                      <span class="rr__name">{{ r.name }}</span>
+                    </div>
+                    <div class="rr__body">
+                      <div class="rr__item">
+                        <div class="rr__icon" aria-hidden="true">
+                          <svg viewBox="0 0 24 24" width="14" height="14"><path fill="currentColor" d="M14 14.8V5a2 2 0 1 0-4 0v9.8a4 4 0 1 0 4 0ZM12 4a1 1 0 0 1 1 1v6h-2V5a1 1 0 0 1 1-1Z" /></svg>
+                        </div>
+                        <div class="rr__label"><div class="zh">温度</div><div class="en">Temperature</div></div>
+                        <div class="rr__val"><span class="num">{{ fmtNum(r.currentTemperature) }}</span><span class="unit">°C</span></div>
+                      </div>
+                      <div class="rr__item">
+                        <div class="rr__icon" aria-hidden="true">
+                          <svg viewBox="0 0 24 24" width="14" height="14"><path fill="currentColor" d="M12 3s-6 6.6-6 11a6 6 0 0 0 12 0c0-4.4-6-11-6-11Z" /></svg>
+                        </div>
+                        <div class="rr__label"><div class="zh">湿度</div><div class="en">Humidity</div></div>
+                        <div class="rr__val"><span class="num">{{ fmtNum(r.currentHumidity) }}</span><span class="unit">%</span></div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+                <div v-if="!roomsLive.length" class="rr__empty">{{ st[40] === 'loading' || st[40] === 'idle' ? '加载中...' : '暂无数据' }}</div>
+              </div>
+              <button v-if="roomsLive.length > 10" class="rr__nav r" :disabled="rrEnd" aria-label="下一页" @click="rrScroll(1)">›</button>
             </div>
           </div>
-          <div v-else class="empty">{{ stateNote(st[40], '暂无房间数据') }}</div>
         </TechPanel>
 
         <!-- RoomStats -->
@@ -94,18 +140,6 @@
       </div>
 
       <div class="col col--right">
-        <!-- 一级告警（dealer-map 新增） -->
-        <TechPanel class="p-alarm" :title="`一级告警 · 10天 · 进行中 ${activeAlarms}/${alarms.length}`" variant="13" :background-color="PANEL_BG">
-          <ul class="alarms">
-            <li v-for="a in alarms" :key="a.id" :class="{ on: isActiveAlarm(a) }">
-              <span class="t">{{ fmtTs(a.ts) }}</span>
-              <span class="d">{{ a.device }}</span>
-              <span class="c">{{ a.content }}<small>{{ isActiveAlarm(a) ? '进行中' : a.status === 1 ? '已恢复' : '已处理' }}</small></span>
-            </li>
-            <li v-if="!alarms.length" class="empty">10 天内无一级告警</li>
-          </ul>
-        </TechPanel>
-
         <!-- MeterData / BuildingStats -->
         <TechPanel v-for="b in SERIES_BLOCKS" :key="b.type" :class="b.cls" :title="b.title" variant="13" :background-color="PANEL_BG">
           <div class="series">
@@ -119,7 +153,7 @@
             </div>
             <div class="chart">
               <EChart v-if="series[b.type].list.length" :option="seriesOption(b.type)" />
-              <div v-else class="empty">{{ stateNote(st[b.type], b.empty) }}</div>
+              <div v-else class="empty">{{ st[b.type] === 'loading' || st[b.type] === 'idle' ? '加载中...' : '暂无数据' }}</div>
             </div>
           </div>
         </TechPanel>
@@ -255,14 +289,16 @@ async function runQuery(type, opts = {}) {
     return null
   }
 }
-async function refreshLive() {
+async function refreshLive(manual = true) {
   if (liveBusy.value || !project.value) return
   liveBusy.value = true
+  // 电表/能效一旦超时，自动刷新不再重查（只在手动「刷新」时重试）
+  const skip = (t) => !manual && st[t] === 'timeout'
   const [r41, r40, r44, r43, r30] = await Promise.all([
     runQuery(41),
     runQuery(40),
-    runQuery(44),
-    runQuery(43),
+    skip(44) ? null : runQuery(44),
+    skip(43) ? null : runQuery(43),
     runQuery(30, { query: { projectId } }),
   ])
   if (r41) live[41] = r41
@@ -271,12 +307,13 @@ async function refreshLive() {
   if (r43) series[43].list = r43.dataList || []
   if (r30) live[30] = r30
   online.value = [r41, r40, r44, r43, r30].some(Boolean)
+  setTimeout(rrCheck, 50)
   liveAt.value = Date.now()
   liveBusy.value = false
 }
 let timer = null
 function tick() {
-  if (document.visibilityState === 'visible' && Date.now() - liveAt.value >= LIVE_INTERVAL - 1000) refreshLive()
+  if (document.visibilityState === 'visible' && Date.now() - liveAt.value >= LIVE_INTERVAL - 1000) refreshLive(false)
 }
 
 const indoor = computed(() => live[41]?.indoorData || (latest.value ? { temperature: latest.value.d1, humidity: latest.value.d2, pm25: latest.value.d3, co2: latest.value.d4 } : {}))
@@ -285,6 +322,33 @@ const indoorNote = computed(() =>
   live[41]?.indoorData ? '实时' : latest.value ? `${stateNote(st[41])}；显示传感器最近上报 ${fmtTs(latest.value.timestamp * 1000)}` : stateNote(st[41])
 )
 const roomsLive = computed(() => live[40]?.data || [])
+const roomPages = computed(() => {
+  const out = []
+  for (let i = 0; i < roomsLive.value.length; i += 10) out.push(roomsLive.value.slice(i, i + 10))
+  return out
+})
+const fmtNum = (v) => (v === undefined || v === null || isNaN(v) ? '--' : (+v).toFixed(1))
+const rrEl = ref(null)
+const rrStart = ref(true)
+const rrEnd = ref(false)
+function rrCheck() {
+  const e = rrEl.value
+  if (!e) return
+  rrStart.value = e.scrollLeft <= 0
+  rrEnd.value = e.scrollLeft + e.clientWidth >= e.scrollWidth - 2
+}
+function rrScroll(dir) {
+  const e = rrEl.value
+  if (e) e.scrollBy({ left: dir * (e.clientWidth + 20), behavior: 'smooth' })
+}
+const alarmOpen = ref(false)
+const astripBtn = ref(null)
+const alarmPos = ref({})
+function toggleAlarms() {
+  const r = astripBtn.value?.getBoundingClientRect()
+  if (r) alarmPos.value = { top: `${r.bottom + 4}px`, left: `${r.left}px` }
+  alarmOpen.value = !alarmOpen.value
+}
 const roomTitle = (r) =>
   [['地暖温度', r.floorTemperature], ['顶棚阀', r.ceilingValve], ['地暖阀', r.floorValve], ['露点保护', r.dewPointProtection], ['风速', r.fanSpeed], ['通讯故障', r.communicationFault], ['传感器故障', r.sensorFault]]
     .filter(([, v]) => v !== undefined && v !== '')
@@ -383,7 +447,8 @@ const sensorOption = computed(() => {
     tooltip: { ...tooltipStyle, trigger: 'axis', valueFormatter: (v) => `${v}${m.unit}` },
     xAxis: categoryAxis({ data: daily.value.map((d) => d.k) }),
     yAxis: valueAxis({ scale: true }),
-    series: [{ type: 'line', name: m.label, data: daily.value.map((d) => d[m.key]), smooth: true, symbol: 'none', lineStyle: { width: 2, color: '#00d4ff' }, areaStyle: { color: 'rgba(0,212,255,0.12)' } }],
+    // 只画有数据的日期，直线连接真实点（不用样条，避免过冲）
+    series: [{ type: 'line', name: m.label, data: daily.value.map((d) => d[m.key]), smooth: false, symbol: 'circle', symbolSize: 5, itemStyle: { color: '#00d4ff' }, lineStyle: { width: 2, color: '#00d4ff' }, areaStyle: { color: 'rgba(0,212,255,0.10)' } }],
   }
 })
 async function loadSensor() {
@@ -508,17 +573,19 @@ onBeforeUnmount(() => clearInterval(timer))
   border-radius: 4px;
 }
 .pd__body {
+  /* 与 niuniu RoomDetail 相同：padding 20 / gap 20，左 6 右 4 */
   flex: 1;
   min-height: 0;
   display: flex;
-  gap: 16px;
-  padding: 16px;
+  gap: 20px;
+  padding: 20px;
+  box-sizing: border-box;
 }
 .col {
   min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 20px;
   > * {
     min-height: 0;
   }
@@ -529,21 +596,19 @@ onBeforeUnmount(() => clearInterval(timer))
 .col--right {
   flex: 4;
 }
+/* niuniu RoomDetail：左 1.5 / 2.5 / 2，右 2 / 2 / 2.5 */
 .p-sum {
   flex: 1.5;
 }
 .p-real {
-  flex: 2;
-}
-.p-stats {
   flex: 2.5;
 }
-.p-alarm {
-  flex: 2.2;
+.p-stats {
+  flex: 2;
 }
 .p-meter,
 .p-energy {
-  flex: 1;
+  flex: 2;
 }
 .p-eq {
   flex: 2.5;
@@ -913,5 +978,275 @@ onBeforeUnmount(() => clearInterval(timer))
   font-weight: 600;
   color: var(--pd-accent);
   border-left: 3px solid var(--pd-accent);
+}
+
+.sum__top {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-bottom: 8px;
+  .sum__name {
+    margin: 0;
+  }
+}
+.astrip {
+  position: relative;
+  min-width: 0;
+  flex: 1;
+}
+.astrip__btn {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  max-width: 100%;
+  padding: 2px 10px;
+  font: inherit;
+  font-size: 12px;
+  color: var(--pd-muted);
+  background: rgba(0, 212, 255, 0.06);
+  border: 1px solid rgba(0, 212, 255, 0.25);
+  border-radius: 3px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.astrip.on .astrip__btn {
+  color: #ffd2d2;
+  background: rgba(255, 77, 79, 0.1);
+  border-color: rgba(255, 77, 79, 0.55);
+}
+.astrip__last {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  opacity: 0.85;
+}
+.astrip__list {
+  /* 传送到 body，主题变量需在此重新声明 */
+  --pd-muted: var(--dm-text-muted, #93b5d6);
+  position: fixed;
+  z-index: 80;
+  color: var(--dm-text, #d8ecff);
+  width: min(560px, 90vw);
+  max-height: 300px;
+  margin: 0;
+  padding: 6px 10px;
+  overflow: auto;
+  list-style: none;
+  background: rgba(6, 18, 40, 0.97);
+  border: 1px solid rgba(0, 212, 255, 0.45);
+  border-radius: 4px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+  li {
+    display: grid;
+    grid-template-columns: 78px 1fr;
+    column-gap: 8px;
+    padding: 5px 4px;
+    font-size: 12px;
+    border-bottom: 1px dashed rgba(64, 110, 180, 0.25);
+    border-left: 2px solid transparent;
+    &.on {
+      border-left-color: #ff4d4f;
+    }
+    &.empty {
+      display: block;
+      border: 0;
+    }
+  }
+  .t {
+    grid-row: span 2;
+    color: var(--pd-muted);
+  }
+  .d {
+    color: #fff;
+  }
+  .c {
+    color: var(--pd-muted);
+    small {
+      margin-left: 6px;
+    }
+  }
+}
+/* ---------- 房间实时情况：与 niuniu RoomReal 同尺寸结构 ---------- */
+.rr {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+.rr__title {
+  padding: 10px 40px 0;
+  font-size: 16px;
+  font-weight: bold;
+  color: #fff;
+}
+.rr__content {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  padding: 10px 40px;
+  overflow: hidden;
+}
+.rr__nav {
+  position: absolute;
+  top: 50%;
+  z-index: 10;
+  width: 32px;
+  height: 60px;
+  transform: translateY(-50%);
+  font-size: 22px;
+  color: #fff;
+  background: rgba(0, 212, 255, 0.12);
+  border: 1px solid rgba(0, 212, 255, 0.45);
+  cursor: pointer;
+  &.l {
+    left: 0;
+    border-left: 0;
+    border-radius: 0 4px 4px 0;
+  }
+  &.r {
+    right: 0;
+    border-right: 0;
+    border-radius: 4px 0 0 4px;
+  }
+  &:disabled {
+    opacity: 0.3;
+    cursor: not-allowed;
+  }
+}
+.rr__wrap {
+  flex: 1;
+  min-width: 0;
+  width: 100%;
+  height: 100%;
+  display: flex;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scroll-behavior: smooth;
+  scroll-snap-type: x mandatory;
+  scrollbar-width: none;
+  &::-webkit-scrollbar {
+    display: none;
+  }
+}
+.rr__page {
+  flex: 0 0 100%;
+  width: 100%;
+  height: 100%;
+  margin-right: 20px;
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  grid-template-rows: repeat(2, minmax(0, 1fr));
+  gap: 15px;
+  scroll-snap-align: start;
+  &:last-child {
+    margin-right: 0;
+  }
+}
+.rr__card {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: 100%;
+  padding: 8px 10px;
+  box-sizing: border-box;
+  overflow: hidden;
+  color: var(--pd-muted);
+  border: 1px solid rgba(147, 181, 214, 0.3);
+  border-radius: 8px;
+  transition: all 0.3s ease;
+  &.on {
+    color: #fff;
+    border: 2px solid rgba(0, 212, 255, 0.7);
+    background: rgba(0, 212, 255, 0.08);
+    box-shadow: 0 0 12px rgba(0, 212, 255, 0.35), inset 0 0 10px rgba(0, 212, 255, 0.12);
+  }
+}
+.rr__head {
+  display: flex;
+  align-items: center;
+  margin-bottom: 8px;
+  padding-bottom: 4px;
+  border-bottom: 1px solid rgba(147, 181, 214, 0.3);
+}
+.rr__card.on .rr__head {
+  border-bottom-color: rgba(0, 212, 255, 0.45);
+}
+.rr__id {
+  flex-shrink: 0;
+  margin-right: 8px;
+  font-size: 12px;
+  opacity: 0.6;
+}
+.rr__name {
+  overflow: hidden;
+  font-size: 14px;
+  font-weight: bold;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.rr__body {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-evenly;
+}
+.rr__item {
+  display: flex;
+  align-items: center;
+  width: 100%;
+}
+.rr__icon {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  margin-right: 8px;
+  border: 1px solid rgba(147, 181, 214, 0.3);
+  border-radius: 50%;
+}
+.rr__card.on .rr__icon {
+  border-color: rgba(0, 212, 255, 0.6);
+}
+.rr__label {
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  width: 55px;
+  .zh {
+    margin-bottom: 2px;
+    font-size: 12px;
+    opacity: 0.8;
+    white-space: nowrap;
+  }
+  .en {
+    font-size: 12px;
+    opacity: 0.5;
+    transform: scale(0.85);
+    transform-origin: left center;
+    white-space: nowrap;
+  }
+}
+.rr__val {
+  flex: 1;
+  display: flex;
+  align-items: baseline;
+  justify-content: flex-end;
+  .num {
+    font-size: 16px;
+    font-weight: bold;
+  }
+  .unit {
+    margin-left: 2px;
+    font-size: 11px;
+    opacity: 0.6;
+  }
+}
+.rr__empty {
+  width: 100%;
+  margin-top: 40px;
+  text-align: center;
+  color: var(--pd-muted);
 }
 </style>
