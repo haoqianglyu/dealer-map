@@ -4,9 +4,13 @@ compatibility_date = "2026-10-01"
 workers_dev = false
 routes = [ { pattern = "dealermap.haoqianglyu.com", custom_domain = true } ]
 
-# 不开启 observability 日志（代理请求含 token / 账号数据）
+# 只保留 console.log（被拒透传请求的 message_type）；关闭调用日志，不记录请求 URL/头/体（含 token、账号数据）
 [observability]
-enabled = false
+enabled = true
+head_sampling_rate = 1
+
+[observability.logs]
+invocation_logs = false
 
 [build]
 command = "VITE_AMAP_SECURITY= VITE_FETCH_ALL=true VITE_PAGE_SIZE=100 npm run build"

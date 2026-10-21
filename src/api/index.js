@@ -121,3 +121,22 @@ export async function listAlarms({ level = '1', days = 10, limit = 100, concurre
   const seen = new Set()
   return out.filter((a) => (seen.has(a.id) ? false : (seen.add(a.id), true))).map(toAlarm)
 }
+
+// ---------- 项目详情（二级界面，参照 niuniu room-detail；全部只读） ----------
+// GET /project/{id} → project_entity（/projects 的 project_ids 过滤不生效）
+export const getProject = (id) => http.get(`/project/${id}`).then((r) => r.data?.project_entity || null)
+export const getProjectConfig = (configId) =>
+  http.get(`/project-config/${configId}`).then((r) => {
+    try {
+      return JSON.parse(r.data?.project_config_entity?.config || 'null')
+    } catch {
+      return null
+    }
+  })
+// 传感器历史：start/end 为秒；entities[{ d1 温度, d2 湿度, d3 PM2.5, d4 CO₂, timestamp(秒) }]
+export const getDeviceDataList = ({ deviceId, projectId, start, end }) =>
+  http.post('/ctrl/get-device-data-list', { device_id: deviceId, project_id: projectId, start_time: start, end_time: end }).then((r) => r.data?.entities || [])
+export const getDeviceCategories = () =>
+  http.post('/device-categories', { page_options: { page: 1, limit: 0 } }).then((r) => r.data?.device_category_entities || [])
+export const getDeviceModels = () =>
+  http.post('/device-models', { page_options: { page: 1, limit: 0 } }).then((r) => r.data?.device_model_entities || [])

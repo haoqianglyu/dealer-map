@@ -5,6 +5,7 @@ const routes = [
   { path: '/', redirect: '/dealer-map' },
   { path: '/login', component: () => import('@/views/Login.vue') },
   { path: '/dealer-map', component: () => import('@/views/DealerMap.vue') },
+  { path: '/project/:id', component: () => import('@/views/ProjectDetail.vue') },
 ]
 
 const router = createRouter({ history: createWebHashHistory(), routes })

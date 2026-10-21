@@ -3,6 +3,9 @@
 # 用法：tests/marker-click.sh   （退出码 0 = 通过）
 set -u
 ab() { agent-browser "$@"; }
+# 从干净的地图页开始（整页刷新，回到默认缩放）
+ab eval 'location.hash="#/dealer-map"; location.reload(); 1' >/dev/null; sleep 4
+for i in $(seq 1 30); do [ "$(ab eval 'document.querySelectorAll(".dm-mk").length > 0 ? 1 : 0' | tr -d '"')" = "1" ] && break; sleep 2; done; sleep 3
 hit=$(ab eval 'JSON.stringify((()=>{const m=document.querySelector(".dm-mk--district")||document.querySelector(".dm-mk");if(!m)return "none";const r=m.getBoundingClientRect();const el=document.elementFromPoint(r.x+r.width/2,r.y+r.height/2);return m.contains(el)?"ok":"blocked by "+el.tagName})())')
 echo "district hit-test: $hit"
 case "$hit" in *ok*) ;; *) exit 1;; esac
@@ -32,3 +35,27 @@ ab mouse move ${red%,*} ${red#*,} >/dev/null; ab mouse down >/dev/null; ab mouse
 rows=$(ab eval 'JSON.stringify([...document.querySelectorAll(".dm-pop li.al")].filter(l=>l.offsetParent).slice(0,3).map(l=>l.innerText.replace(/\s+/g," ")))')
 echo "alarm rows: $rows"
 case "$rows" in *级*) echo PASS-ALARM ;; *) exit 1;; esac
+
+# 4) 弹窗「详情 ›」→ 项目二级界面；返回地图后标记仍在（keep-alive 保留视图）
+before=$(ab eval 'document.querySelectorAll(".dm-mk").length' | tr -d '"')
+go=$(ab eval 'JSON.stringify((()=>{const a=[...document.querySelectorAll(".dm-pop .go")].find(x=>x.offsetParent);if(!a)return null;const r=a.getBoundingClientRect();return [Math.round(r.x+r.width/2),Math.round(r.y+r.height/2)]})())' | tr -d '"\\[]')
+[ -n "$go" ] && [ "$go" != "null" ] || { echo "no 详情 link"; exit 1; }
+ab mouse move ${go%,*} ${go#*,} >/dev/null; ab mouse down >/dev/null; ab mouse up >/dev/null; sleep 6
+url=$(ab get url); echo "detail url: $url"
+case "$url" in *"#/project/"*) ;; *) exit 1;; esac
+name=$(ab eval 'document.querySelector(".sum__name")?.innerText || ""'); echo "detail name: ${name:0:30}"
+[ -n "${name//\"/}" ] || exit 1
+ab eval 'document.querySelector(".pd__back").click(); 1' >/dev/null; sleep 2
+after=$(ab eval 'document.querySelectorAll(".dm-mk").length' | tr -d '"')
+echo "markers before/after detail: $before/$after"
+[ "$after" -gt 0 ] && [ "$after" = "$before" ] || exit 1
+echo PASS-DETAIL
+
+# 5) 实时透传：打开在线项目详情（默认 生普账号的一个通用版项目，可用 LIVE_PID 覆盖），等查询结束，应有房间实时数据 + 设备在线点
+LIVE_PID=${LIVE_PID:-6ad591da1e18559ea86299c1}
+ab eval "location.hash='#/project/$LIVE_PID'; 1" >/dev/null; sleep 4
+for i in $(seq 1 15); do b=$(ab eval 'document.querySelector(".pd__bar")?.innerText.includes("查询中") ? 1 : 0' | tr -d '"'); [ "$b" = "0" ] && break; sleep 2; done
+live=$(ab eval 'JSON.stringify({rooms: document.querySelectorAll(".room").length, online: document.querySelectorAll(".eq .dot.on").length, bar: document.querySelector(".pd__live")?.innerText})')
+echo "live: $live"
+case "$live" in *'rooms\":0'*) exit 1;; esac
+echo PASS-LIVE

@@ -5,6 +5,7 @@
 <script setup>
 import { ref, watch, onMounted, onBeforeUnmount } from 'vue'
 import { createWarmLights } from './warmLights'
+import { showName } from '@/utils/showroom'
 import { STATES, stateRank, worstState, alarmCount, hasNewAlarm, levelState, isActiveAlarm, NOTICE_COLOR } from '@/geo/states'
 
 // 高德地图：自定义 HTML 标记（每个小区一个，缩小时按区县汇总）+ 热力图
@@ -19,6 +20,7 @@ const props = defineProps({
   center: { type: Array, default: null },
   focus: { type: Object, default: null }, // { key, n }：飞到该小区并打开弹窗（n 变化即触发）
 })
+const emit = defineEmits(['open-project'])
 
 const ZOOM_SPLIT = 12 // < 12 显示区县汇总，≥ 12 显示小区
 const el = ref(null)
@@ -71,7 +73,7 @@ function popoverHtml(c) {
     .sort((a, b) => stateRank(b.state) - stateRank(a.state) || (b.alarms?.length || 0) - (a.alarms?.length || 0) || String(b.created).localeCompare(String(a.created)))
     .map(
       (p) => `<li><i style="background:${STATES[p.state]?.color || STATES.normal.color}" title="${STATES[p.state]?.label || ''}"></i>
-        <span class="n">${esc(p.name || c.label)}</span><span class="a">${p.area ? `${p.area}㎡` : ''}</span></li>${alarmRows(p.alarms)}`
+        <span class="n">${esc(showName(p.name) || c.label)}</span><span class="a">${p.area ? `${p.area}㎡` : ''}<a class="go" data-pid="${esc(p.id)}" role="button" tabindex="0">详情 ›</a></span></li>${alarmRows(p.alarms)}`
     )
     .join('')
   const alarms = alarmCount(c.projects)
@@ -188,6 +190,11 @@ onMounted(() => {
     zoom: 10.5,
     center: props.center || undefined,
     mapStyle: 'amap://styles/darkblue',
+  })
+  // 弹窗里「详情 ›」：事件委托（弹窗是 HTML 字符串）
+  el.value.addEventListener('click', (e) => {
+    const t = e.target.closest && e.target.closest('[data-pid]')
+    if (t) emit('open-project', t.getAttribute('data-pid'))
   })
   map.addControl(new AMap.Scale({ position: { left: '24px', bottom: '78px' } })) // 放在左下图例上方，避开图例与高德 logo
   if (props.center) centerOn(props.center)
@@ -378,6 +385,16 @@ onBeforeUnmount(() => {
 .dm-pop li .a {
   color: #93b5d6;
   font-family: 'DIN Alternate', 'Bahnschrift', monospace;
+}
+.dm-pop .go {
+  margin-left: 8px;
+  font-family: inherit;
+  color: #00d4ff;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.dm-pop .go:hover {
+  text-decoration: underline;
 }
 .dm-pop li.al {
   grid-template-columns: 8px auto 1fr auto;

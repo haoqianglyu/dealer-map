@@ -11,6 +11,12 @@ const API_ALLOW = [
   /^\/ctrl\/projects$/,
   /^\/project\/new-list$/,
   /^\/device-alarms$/,
+  // 项目详情（二级界面）只读接口
+  /^\/project\/[0-9a-f]{24}$/,
+  /^\/project-config\/[0-9a-f]{24}$/,
+  /^\/ctrl\/get-device-data-list$/,
+  /^\/device-categories$/,
+  /^\/device-models$/,
 ]
 
 const SECURITY_HEADERS = {
@@ -29,8 +35,34 @@ function withHeaders(res, extra = {}) {
 
 const notFound = () => withHeaders(new Response('Not Found', { status: 404 }), { 'Cache-Control': 'no-store' })
 
+// 设备透传：只放行「查询」类消息（41 RoomStatusGet、40 RoomDataGet、44 AmmeterDataQuery、43 EnergyDtoQuery、
+// 30 OnlineDeviceListQuery、15 DeviceDataGetQuery）；其它 message_type（含各类 Set/控制）一律 403 并记录
+const CTRL_PATHS = new Set(['/ctrl-message/pass', '/ctrl-callback-result'])
+const CTRL_QUERY_TYPES = new Set([41, 40, 44, 43, 30, 15])
+
 async function proxyApi(request, url) {
   const path = url.pathname.slice(4) // strip "/api"
+  if (CTRL_PATHS.has(path)) {
+    if (request.method !== 'POST') return notFound()
+    const text = await request.text()
+    let mt = null
+    try {
+      mt = Number(JSON.parse(text).message_type)
+    } catch {
+      /* 非 JSON */
+    }
+    if (!CTRL_QUERY_TYPES.has(mt) || text.length > 4096) {
+      console.log(JSON.stringify({ rejected: path, message_type: Number.isFinite(mt) ? mt : null })) // 只记录类型，不记录请求体
+      return withHeaders(new Response(JSON.stringify({ error: 'message_type not allowed' }), { status: 403, headers: { 'content-type': 'application/json' } }), { 'Cache-Control': 'no-store' })
+    }
+    const headers = new Headers({ 'content-type': 'application/json' })
+    const auth = request.headers.get('authorization')
+    if (auth) headers.set('authorization', auth)
+    const upstream = await fetch(API_ORIGIN + path, { method: 'POST', headers, body: text, redirect: 'manual' })
+    const res = withHeaders(upstream, { 'Cache-Control': 'no-store' })
+    res.headers.delete('set-cookie')
+    return res
+  }
   if (!API_ALLOW.some((re) => re.test(path))) return notFound()
   if (!['GET', 'POST'].includes(request.method)) return notFound()
   const headers = new Headers()
@@ -109,6 +141,8 @@ export default {
       }
       return withHeaders(res, { 'Cache-Control': 'public, max-age=31536000, immutable' }) // 文件名带内容哈希
     }
+    // HTML 入口每次都向服务器确认，部署后立即拿到新版本
+    if ((res.headers.get('content-type') || '').includes('text/html')) return withHeaders(res, { 'Cache-Control': 'no-cache' })
     return withHeaders(res)
   },
 }

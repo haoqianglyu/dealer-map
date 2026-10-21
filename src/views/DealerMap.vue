@@ -11,6 +11,7 @@
         :heat-metric="heatMetric"
         :center="center"
         :focus="focus"
+        @open-project="openProject"
       />
       <FallbackMap
         v-else
@@ -101,6 +102,7 @@
             <span class="date">{{ fmtTs(a.ts) }}</span>
             <span class="name">{{ a.label }}<small>{{ a.district }}{{ a.active ? '' : a.status === 1 ? ' · 已恢复' : ' · 已处理' }}</small></span>
             <span class="meta">{{ a.device }} · {{ a.content }}</span>
+            <button class="go" title="查看项目详情" @click.stop="openProject(a.projectId)">详情 ›</button>
           </li>
           <li v-if="!alarmFeed.length && !alarmError" class="empty">10 天内无一级告警</li>
         </ul>
@@ -166,6 +168,7 @@ import { STATES, applyStates, alarmStates, isActiveAlarm } from '@/geo/states'
 import { fmtNumber, fmtArea } from '@/utils/format'
 import { tooltipStyle, categoryAxis, valueAxis, AXIS_LABEL_COLOR } from '@/utils/chartTheme'
 
+defineOptions({ name: 'DealerMap' })
 const PANEL_BG = 'rgba(3, 12, 30, 0.9)'
 const FETCH_ALL = import.meta.env.VITE_FETCH_ALL === 'true'
 const PAGE_SIZE = Number(import.meta.env.VITE_PAGE_SIZE) || 20
@@ -394,6 +397,9 @@ const fmtTs = (ms) => {
   const d = new Date(ms)
   const z = (n) => String(n).padStart(2, '0')
   return `${z(d.getMonth() + 1)}-${z(d.getDate())} ${z(d.getHours())}:${z(d.getMinutes())}`
+}
+function openProject(id) {
+  if (id) router.push(`/project/${id}`)
 }
 function focusAlarm(a) {
   if (!a.located) return
@@ -1149,6 +1155,22 @@ onBeforeUnmount(() => {
       overflow: hidden;
       white-space: nowrap;
       text-overflow: ellipsis;
+    }
+    li {
+      position: relative;
+    }
+    .go {
+      position: absolute;
+      top: 6px;
+      right: 4px;
+      padding: 0 6px;
+      font: inherit;
+      font-size: 11px;
+      color: #00d4ff;
+      background: rgba(0, 212, 255, 0.08);
+      border: 1px solid rgba(0, 212, 255, 0.35);
+      border-radius: 3px;
+      cursor: pointer;
     }
   }
 }
