@@ -16,7 +16,7 @@ export function loadAmap() {
     loading = AMapLoader.load({
       key: AMAP_KEY,
       version: '2.0',
-      plugins: ['AMap.Geocoder', 'AMap.PlaceSearch', 'AMap.HeatMap', 'AMap.Scale'],
+      plugins: ['AMap.Geocoder', 'AMap.PlaceSearch', 'AMap.Scale'],
     }).catch((e) => {
       loading = null
       throw e instanceof Error ? e : new Error(String(e))

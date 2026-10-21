@@ -4,6 +4,7 @@
 
 <script setup>
 import { ref, watch, onMounted, onBeforeUnmount } from 'vue'
+import { createWarmLights } from './warmLights'
 import { STATES, stateRank, worstState, alarmCount, hasNewAlarm, levelState, isActiveAlarm, NOTICE_COLOR } from '@/geo/states'
 
 // 高德地图：自定义 HTML 标记（每个小区一个，缩小时按区县汇总）+ 热力图
@@ -14,6 +15,7 @@ const props = defineProps({
   communities: { type: Array, default: () => [] },
   districts: { type: Array, default: () => [] },
   mode: { type: String, default: 'markers' }, // markers | heat
+  heatMetric: { type: String, default: 'projects' }, // 热力：projects 按项目数 | alarms 按 10 天内一级告警数
   center: { type: Array, default: null },
   focus: { type: Object, default: null }, // { key, n }：飞到该小区并打开弹窗（n 变化即触发）
 })
@@ -140,10 +142,27 @@ function renderMarkers() {
   map.add(markers)
 }
 
+const STYLE_MARKERS = 'amap://styles/darkblue'
+const STYLE_HEAT = 'amap://styles/dark' // 深炭底图，让暖光更突出
+let styleNow = STYLE_MARKERS
 function renderHeat() {
-  const data = props.communities.map((c) => ({ lng: c.lnglat[0], lat: c.lnglat[1], count: c.projects.length }))
-  heat.setDataSet({ data, max: Math.max(3, ...data.map((d) => d.count)) })
-  props.mode === 'heat' ? heat.show() : heat.hide()
+  const on = props.mode === 'heat'
+  const style = on ? STYLE_HEAT : STYLE_MARKERS
+  if (style !== styleNow) {
+    map.setMapStyle(style)
+    styleNow = style
+  }
+  const lights = props.communities
+    .map((c) => {
+      if (props.heatMetric === 'alarms') {
+        const list = c.projects.flatMap((p) => p.alarms || []).filter((a) => a.level === 1)
+        return { lnglat: c.lnglat, count: list.length, pulse: list.some(isActiveAlarm) }
+      }
+      return { lnglat: c.lnglat, count: c.projects.length, pulse: false }
+    })
+    .filter((l) => l.count > 0) // 当前筛选下 0 个项目/告警的小区不画；待校正小区本来就不在 communities 里
+  heat.set(lights, props.heatMetric === 'alarms' ? 'red' : 'gold')
+  heat.show(on)
 }
 
 function render() {
@@ -172,11 +191,7 @@ onMounted(() => {
   map.addControl(new AMap.Scale({ position: 'LB' }))
   if (props.center) centerOn(props.center)
   info = new AMap.InfoWindow({ isCustom: true, offset: new AMap.Pixel(0, -20), anchor: 'bottom-center' })
-  heat = new AMap.HeatMap(map, {
-    radius: 36,
-    opacity: [0, 0.85],
-    gradient: { 0.3: '#1b62d8', 0.55: '#00d4ff', 0.75: '#00e2a1', 0.9: '#ffc722', 1: '#ff7c5c' },
-  })
+  heat = createWarmLights(AMap, map)
   level = map.getZoom() < ZOOM_SPLIT ? 'district' : 'community'
   map.on('zoomend', onZoom)
   // 点击地图空白处关闭弹窗
@@ -186,7 +201,7 @@ onMounted(() => {
 
 watch(() => [props.communities, props.districts], render)
 watch(
-  () => props.mode,
+  () => [props.mode, props.heatMetric],
   () => {
     info && info.close()
     render()
@@ -214,6 +229,7 @@ watch(
 
 onBeforeUnmount(() => {
   if (map) {
+    heat && heat.destroy()
     map.off('zoomend', onZoom)
     map.destroy()
   }

@@ -8,6 +8,7 @@
         :communities="communities"
         :districts="districtMarkers"
         :mode="mode"
+        :heat-metric="heatMetric"
         :center="center"
         :focus="focus"
       />
@@ -45,6 +46,10 @@
         <div v-if="AMapRef" class="seg">
           <button :class="{ on: mode === 'markers' }" @click="mode = 'markers'">点位</button>
           <button :class="{ on: mode === 'heat' }" @click="mode = 'heat'">热力</button>
+        </div>
+        <div v-if="AMapRef && mode === 'heat'" class="seg">
+          <button :class="{ on: heatMetric === 'projects' }" @click="heatMetric = 'projects'">项目</button>
+          <button :class="{ on: heatMetric === 'alarms' }" @click="heatMetric = 'alarms'">告警</button>
         </div>
         <span class="clock">{{ clock }}</span>
         <span class="user" :title="scopeHint">{{ userName }}</span>
@@ -222,6 +227,7 @@ const alarms = shallowRef([])
 const alarmError = ref('')
 const alarmStateMap = computed(() => alarmStates(alarms.value))
 const focus = shallowRef(null)
+const heatMetric = ref('projects')
 let alarmTimer = null
 async function loadAlarms() {
   try {
