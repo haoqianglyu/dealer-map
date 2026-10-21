@@ -53,26 +53,43 @@ export function createWarmLights(AMap, map) {
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
     ctx.clearRect(0, 0, w, h)
     if (!visible) return
-    // 压暗底图到近黑炭色（#1c1c1e），只留淡灰道路线
-    ctx.fillStyle = 'rgba(28, 28, 30, 0.72)'
+    // 轻微压暗底图（不能太重，否则底图地名/道路看不清）
+    ctx.fillStyle = 'rgba(14, 14, 16, 0.28)'
     ctx.fillRect(0, 0, w, h)
     if (!lights.length) return
     const res = map.getResolution() // 米/像素（视野中心）
+    // 远景（zoom < 12）按 2^((zoom−12)·0.6) 缩小最小像素，城市级视图里各小区灯光才分得开
+    const zoomScale = Math.min(1, Math.pow(2, (map.getZoom() - 12) * 0.6))
+    // 密集处降低外晕 α：按 24px 网格统计邻近灯数
+    const cell = 24
+    const pts = lights.map((l) => ({ l, px: map.lngLatToContainer(l.lnglat) }))
+    const grid = new Map()
+    for (const { px } of pts) {
+      const k = `${Math.floor(px.x / cell)},${Math.floor(px.y / cell)}`
+      grid.set(k, (grid.get(k) || 0) + 1)
+    }
+    const density = (px) => {
+      const cx = Math.floor(px.x / cell)
+      const cy = Math.floor(px.y / cell)
+      let n = 0
+      for (let dx = -1; dx <= 1; dx++) for (let dy = -1; dy <= 1; dy++) n += grid.get(`${cx + dx},${cy + dy}`) || 0
+      return n
+    }
     ctx.globalCompositeOperation = 'lighter'
     const now = performance.now()
     const breath = 0.6 + 0.4 * (0.5 + 0.5 * Math.sin((now / 2000) * Math.PI * 2)) // 2 秒一个周期
     let pulsing = false
     const { halo, core, filament } = palette
     // 小灯先画，大灯后画
-    for (const l of [...lights].sort((a, b) => a.count - b.count)) {
+    for (const { l, px } of pts.sort((a, b) => a.l.count - b.l.count)) {
       const t = tierOf(l.count)
       if (!t) continue
-      const px = map.lngLatToContainer(l.lnglat)
-      const R = Math.max(t.r / res, t.minPx)
+      const R = Math.max(t.r / res, Math.max(5, t.minPx * zoomScale))
+      const crowd = Math.max(0.45, 1 / (1 + 0.12 * (density(px) - 1)))
       if (px.x < -R || px.y < -R || px.x > w + R || px.y > h + R) continue
       // 外晕：宽、很柔、低饱和；芯：小；灯丝：极小的近白亮点（各档几乎同大）
       if (l.pulse) pulsing = true
-      glow(ctx, px.x, px.y, R, halo, t.peak * 0.45 * (l.pulse ? breath : 1))
+      glow(ctx, px.x, px.y, R, halo, t.peak * 0.55 * crowd * (l.pulse ? breath : 1))
       glow(ctx, px.x, px.y, Math.min(R * 0.22, 6 + t.idx * 1.2), core, t.peak * 0.62)
       glow(ctx, px.x, px.y, 2.6 + t.idx * 0.45, filament, t.peak)
     }

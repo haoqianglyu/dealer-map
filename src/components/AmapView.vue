@@ -375,7 +375,7 @@ onBeforeUnmount(() => {
   text-overflow: ellipsis;
 }
 .dm-pop li .a {
-  color: #6f95bb;
+  color: #93b5d6;
   font-family: 'DIN Alternate', 'Bahnschrift', monospace;
 }
 .dm-pop li.al {
@@ -394,10 +394,10 @@ onBeforeUnmount(() => {
 }
 .dm-pop li.al .t {
   font-family: 'DIN Alternate', 'Bahnschrift', monospace;
-  color: #6f95bb;
+  color: #93b5d6;
 }
 .dm-pop li.al.more {
   display: block;
-  color: #6f95bb;
+  color: #93b5d6;
 }
 </style>

@@ -873,7 +873,7 @@ onBeforeUnmount(() => {
   }
   .clock {
     font-family: 'DIN Alternate', 'Bahnschrift', monospace;
-    color: #658bb4;
+    color: #8aaed3;
   }
   .user {
     color: #b7d3f0;
@@ -1012,7 +1012,7 @@ onBeforeUnmount(() => {
     color: #00e2a1;
   }
   .muted-l {
-    color: #5f86ad;
+    color: #8fb0d0;
   }
 }
 
@@ -1086,7 +1086,7 @@ onBeforeUnmount(() => {
     small {
       margin-top: 1px;
       font-size: 11px;
-      color: #5f8fb8;
+      color: #8aaccf;
     }
   }
 }
@@ -1101,7 +1101,7 @@ onBeforeUnmount(() => {
 .muted {
   padding: 6px 18px;
   font-size: 12px;
-  color: #5f86ad;
+  color: #8fb0d0;
 }
 .rows {
   padding: 4px 18px 0;
@@ -1161,7 +1161,7 @@ onBeforeUnmount(() => {
     }
   }
   .date {
-    color: #658bb4;
+    color: #8aaed3;
     font-family: 'DIN Alternate', 'Bahnschrift', monospace;
   }
   .name {
@@ -1169,7 +1169,7 @@ onBeforeUnmount(() => {
   }
   .meta {
     grid-column: 2;
-    color: #6f95bb;
+    color: #93b5d6;
   }
   &.fix li {
     grid-template-columns: 1fr;
@@ -1204,7 +1204,7 @@ onBeforeUnmount(() => {
     }
     .name small {
       margin-left: 6px;
-      color: #6f95bb;
+      color: #93b5d6;
     }
     .meta {
       overflow: hidden;
