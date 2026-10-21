@@ -22,7 +22,6 @@ defineProps({
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 6px;
   background: transparent;
   pointer-events: none;
 }
@@ -40,7 +39,10 @@ defineProps({
   animation: bl-dash 1.5s ease-in-out infinite;
 }
 .bl__text {
+  margin: 3px 0;
   font-size: 14px;
+  font-weight: bold;
+  letter-spacing: 1px;
   color: var(--dm-accent, #00d4ff);
 }
 @keyframes bl-rotate {

@@ -106,7 +106,7 @@
             <div class="stats__part">
               <BoxLoading :show="(st[41] === 'loading' || st[41] === 'idle') && !dayRows.length" />
               <div class="part-h"><span class="ttl">24小时房间数据统计</span></div>
-              <div class="tabs">
+              <div v-show="!((st[41] === 'loading' || st[41] === 'idle') && !dayRows.length)" class="tabs">
                 <button v-for="k in ['平均温度', '平均露点']" :key="k" :class="{ on: dayMetric === k }" @click="dayMetric = k">{{ k }}</button>
               </div>
               <div class="chart">
@@ -128,7 +128,7 @@
                   @update:model-value="(v) => (sensorIdx = v)"
                 />
               </div>
-              <div class="tabs">
+              <div v-show="!((sensorLoading || cfgLoading) && !daily.length)" class="tabs">
                 <button v-for="m in METRICS" :key="m.key" :class="{ on: metric === m.key }" @click="metric = m.key">{{ m.label }}</button>
               </div>
               <div class="chart">
@@ -227,6 +227,7 @@ import { useScreenScale } from '@/composables/useScreenScale'
 import BrandLogo from '@/components/BrandLogo.vue'
 import { session } from '@/api/session'
 import EChart from '@/components/EChart.vue'
+import * as echarts from 'echarts'
 import { me, getDistributor, getProject, getProjectConfig, getDeviceDataList, getDeviceCategories, getDeviceModels, listAlarms } from '@/api'
 import { ctrlQuery, DeviceTimeout } from '@/api/ctrl'
 import { isActiveAlarm } from '@/geo/states'
@@ -250,11 +251,23 @@ function logout() {
   router.replace('/login')
 }
 const SENSOR_MODEL = '620db09cdcae9b926dc804e1' // niuniu：室内传感器 model
+// 曲线配色与 niuniu 相同：每个指标固定一种颜色，面积为同色 0.4 → 0.05 竖向渐变
+const NIU = { blue: [24, 144, 255], green: [0, 201, 120], cyan: [0, 229, 255], yellow: [245, 194, 43], purple: [179, 127, 235] }
+function lineStyleOf([r, g, b]) {
+  const c = `rgb(${r}, ${g}, ${b})`
+  return {
+    itemStyle: { color: c },
+    lineStyle: { width: 3, color: c },
+    areaStyle: { color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [{ offset: 0, color: `rgba(${r}, ${g}, ${b}, 0.4)` }, { offset: 1, color: `rgba(${r}, ${g}, ${b}, 0.05)` }]) },
+  }
+}
+const DAY_COLOR = { 平均温度: NIU.blue, 平均露点: NIU.green }
+const RANGE_COLOR = { datahour: NIU.blue, dataDay: NIU.green, dataMonth: NIU.yellow, dataYear: NIU.purple }
 const METRICS = [
-  { key: 'd1', label: '温度', unit: '°C' },
-  { key: 'd2', label: '湿度', unit: '%' },
-  { key: 'd3', label: 'PM2.5', unit: 'μg/m³' },
-  { key: 'd4', label: 'CO₂', unit: 'ppm' },
+  { key: 'd1', label: '温度', unit: '°C', color: NIU.blue },
+  { key: 'd2', label: '湿度', unit: '%', color: NIU.green },
+  { key: 'd3', label: 'PM2.5', unit: 'μg/m³', color: NIU.cyan },
+  { key: 'd4', label: 'CO₂', unit: 'ppm', color: NIU.purple },
 ]
 const RANGES = [
   { key: 'datahour', label: '24小时' },
@@ -394,7 +407,7 @@ const dayOption = computed(() => ({
   tooltip: { ...tooltipStyle, trigger: 'axis', valueFormatter: (v) => `${v}°C` },
   xAxis: categoryAxis({ data: dayRows.value.map((t) => t.time), boundaryGap: false }),
   yAxis: valueAxis({ scale: true }),
-  series: [{ type: 'line', name: dayMetric.value, data: dayRows.value.map((t) => +(+t.value).toFixed(1)), smooth: dayRows.value.length >= 8 ? 0.4 : false, symbol: 'none', lineStyle: { width: 2, color: '#1e9bff' }, itemStyle: { color: '#1e9bff' }, areaStyle: { color: 'rgba(30,155,255,0.14)' } }],
+  series: [{ type: 'line', name: dayMetric.value, data: dayRows.value.map((t) => +(+t.value).toFixed(1)), smooth: dayRows.value.length >= 8 ? 0.4 : false, symbol: 'none', ...lineStyleOf(DAY_COLOR[dayMetric.value] || NIU.blue) }],
 }))
 
 // 电表 / 能效（niuniu 的横轴标签规则）
@@ -414,7 +427,7 @@ function seriesOption(type) {
     tooltip: { ...tooltipStyle, trigger: 'axis' },
     xAxis: categoryAxis({ data: rangeLabels(s.range, vals.length) }),
     yAxis: valueAxis({ scale: true, name: type === 44 ? '(kWh)' : '', nameTextStyle: { color: '#93b5d6', fontSize: 11 } }),
-    series: [{ type: 'line', data: vals, smooth: true, symbolSize: 4, lineStyle: { width: 2, color: type === 44 ? '#3b7cff' : '#00e2a1' }, areaStyle: { color: type === 44 ? 'rgba(59,124,255,0.14)' : 'rgba(0,226,161,0.12)' } }],
+    series: [{ type: 'line', data: vals, smooth: true, symbolSize: 6, symbol: 'circle', ...lineStyleOf(RANGE_COLOR[s.range] || NIU.blue) }],
   }
 }
 
@@ -480,7 +493,7 @@ const sensorOption = computed(() => {
     xAxis: categoryAxis({ data: daily.value.map((d) => d.k) }),
     yAxis: valueAxis({ scale: true }),
     // 只画有数据的日期，直线连接真实点（不用样条，避免过冲）
-    series: [{ type: 'line', name: m.label, data: daily.value.map((d) => d[m.key]), smooth: daily.value.length >= 8 ? 0.4 : false, symbol: daily.value.length >= 8 ? 'none' : 'circle', symbolSize: 5, itemStyle: { color: '#00d4ff' }, lineStyle: { width: 2, color: '#00d4ff' }, areaStyle: { color: 'rgba(0,212,255,0.10)' } }],
+    series: [{ type: 'line', name: m.label, data: daily.value.map((d) => d[m.key]), smooth: daily.value.length >= 8 ? 0.4 : false, symbol: daily.value.length >= 8 ? 'none' : 'circle', symbolSize: 6, ...lineStyleOf(m.color) }],
   }
 })
 async function loadSensor() {

@@ -131,13 +131,13 @@ onBeforeUnmount(() => document.removeEventListener('pointerdown', onDoc))
 }
 .ss__list {
   position: absolute;
-  top: calc(100% + 4px);
+  top: calc(100% + 12px); /* el-select 弹层默认 offset 12 */
   right: 0;
   z-index: 50;
   width: 100%;
-  max-height: 232px; /* 8 项 × 28px + 内边距 */
+  max-height: 274px; /* el-select-dropdown 最大高度 */
   margin: 0;
-  padding: 4px 0;
+  padding: 6px 0;
   overflow-y: auto;
   list-style: none;
   background: var(--dm-popover-bg, rgba(7, 22, 48, 0.96));
