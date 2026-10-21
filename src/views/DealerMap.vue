@@ -406,7 +406,8 @@ const locatedCount = computed(() => groups.value.filter((g) => geoResults[g.key]
 const sameCity = (district, city) => district && city && String(district).slice(0, 4) === String(city).slice(0, 4)
 let fittedFor = ''
 function fitCity() {
-  const pts = districtMarkers.value.filter((d) => sameCity(d.key, cityCode.value)).flatMap((d) => [d.lnglat, ...d.points])
+  // 只用区县中心（个别小区坐标离群会把视野拉得过远）
+  const pts = districtMarkers.value.filter((d) => sameCity(d.key, cityCode.value)).map((d) => d.lnglat)
   if (!pts.length) return
   fittedFor = cityCode.value
   fit.value = { points: pts, n: Date.now() }
@@ -786,6 +787,7 @@ onBeforeUnmount(() => {
   align-items: center;
   justify-content: center;
   gap: 18px;
+  pointer-events: none;
   background: radial-gradient(60% 70% at 50% 50%, rgba(27, 98, 216, 0.14), transparent 70%), var(--dm-bg);
   &__logo {
     animation: breathe 2.4s ease-in-out infinite;

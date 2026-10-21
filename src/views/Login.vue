@@ -357,6 +357,7 @@ onBeforeUnmount(() => cancelAnimationFrame(raf))
     font-size: 13px;
     color: #ff8a7a;
     i {
+      flex: none;
       width: 14px;
       height: 14px;
       display: grid;
@@ -364,22 +365,16 @@ onBeforeUnmount(() => cancelAnimationFrame(raf))
       font: 700 10px/1 sans-serif;
       font-style: normal;
       color: #04121f;
-      background: currentColor;
+      background: #ff8a7a;
       border-radius: 50%;
-      &::first-letter {
-        color: #04121f;
-      }
     }
     &--warn {
       color: #ffc722;
+      i {
+        background: #ffc722;
+      }
     }
   }
-}
-.msg i {
-  color: inherit;
-}
-.msg i {
-  -webkit-text-fill-color: #04121f;
 }
 .pwd {
   position: relative;

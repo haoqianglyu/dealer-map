@@ -295,7 +295,7 @@ onMounted(() => {
   map.on('zoomend', onZoom)
   map.on('click', () => info.close())
   map.on('complete', () => emit('ready'))
-  setTimeout(() => emit('ready'), 6000) // 兜底：瓦片迟迟不到也不要一直挡着
+  setTimeout(() => emit('ready'), 2500) // 兜底：complete 事件偶尔不触发 / 瓦片迟迟不到时也不要一直挡着
   render()
 })
 
