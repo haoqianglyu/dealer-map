@@ -12,7 +12,7 @@
     </header>
     <div v-if="error" class="pd__error">{{ error }}</div>
 
-    <!-- 布局与 niuniu room-detail 一致：左 6 / 右 4；左 1.5 / 2.5 / 2，右 2 / 2 / 2.5；gap 20 -->
+    <!-- 布局与 niuniu room-detail 一致：左 6 / 右 4；左 1.5 / 2 / 2.5，右 2 / 2 / 2.5；gap 20 -->
     <div class="pd__body">
       <div class="col col--left">
         <!-- ProjectSum -->
@@ -64,7 +64,7 @@
           <div class="rr">
             <div class="rr__title">房间实时情况</div>
             <div class="rr__content">
-              <button class="rr__nav l" :disabled="rrStart || roomsLive.length <= 10" aria-label="上一页" @click="rrScroll(-1)">‹</button>
+              <button v-if="roomsLive.length > 10" class="rr__nav l" :disabled="rrStart" aria-label="上一页" @click="rrScroll(-1)">‹</button>
               <div ref="rrEl" class="rr__wrap" @scroll="rrCheck">
                 <div v-for="(page, pi) in roomPages" :key="pi" class="rr__page">
                   <div v-for="(r, i) in page" :key="r.id || i" class="rr__card" :class="{ on: r.panelSwitch === '开' }" :title="roomTitle(r)">
@@ -92,7 +92,7 @@
                 </div>
                 <div v-if="!roomsLive.length" class="rr__empty">{{ st[40] === 'loading' || st[40] === 'idle' ? '加载中...' : '暂无数据' }}</div>
               </div>
-              <button class="rr__nav r" :disabled="rrEnd || roomsLive.length <= 10" aria-label="下一页" @click="rrScroll(1)">›</button>
+              <button v-if="roomsLive.length > 10" class="rr__nav r" :disabled="rrEnd" aria-label="下一页" @click="rrScroll(1)">›</button>
             </div>
           </div>
         </section>
@@ -383,7 +383,7 @@ const dayOption = computed(() => ({
   tooltip: { ...tooltipStyle, trigger: 'axis', valueFormatter: (v) => `${v}°C` },
   xAxis: categoryAxis({ data: dayRows.value.map((t) => t.time), boundaryGap: false }),
   yAxis: valueAxis({ scale: true }),
-  series: [{ type: 'line', name: dayMetric.value, data: dayRows.value.map((t) => +(+t.value).toFixed(1)), smooth: dayRows.value.length >= 8 ? 0.4 : false, symbol: 'none', lineStyle: { width: 2, color: dayMetric.value === '平均温度' ? '#ffc722' : '#00e2a1' }, areaStyle: { color: dayMetric.value === '平均温度' ? 'rgba(255,199,34,0.12)' : 'rgba(0,226,161,0.12)' } }],
+  series: [{ type: 'line', name: dayMetric.value, data: dayRows.value.map((t) => +(+t.value).toFixed(1)), smooth: dayRows.value.length >= 8 ? 0.4 : false, symbol: 'none', lineStyle: { width: 2, color: '#1e9bff' }, itemStyle: { color: '#1e9bff' }, areaStyle: { color: 'rgba(30,155,255,0.14)' } }],
 }))
 
 // 电表 / 能效（niuniu 的横轴标签规则）
@@ -662,10 +662,10 @@ onBeforeUnmount(() => {
   flex: 1.5;
 }
 .p-real {
-  flex: 2.5;
+  flex: 2;
 }
 .p-stats {
-  flex: 2;
+  flex: 2.5;
 }
 .p-meter,
 .p-energy {
@@ -868,8 +868,9 @@ onBeforeUnmount(() => {
   margin-right: 20px;
   display: grid;
   grid-template-columns: repeat(5, minmax(0, 1fr));
-  grid-template-rows: repeat(2, minmax(0, 1fr));
-  gap: 15px;
+  grid-template-rows: repeat(2, minmax(0, 140px)); /* 紧凑卡片（约 140px） */
+  align-content: center;
+  gap: 12px;
   scroll-snap-align: start;
   &:last-child {
     margin-right: 0;
