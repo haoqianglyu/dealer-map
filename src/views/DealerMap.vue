@@ -55,7 +55,7 @@
             label="城市"
             @update:model-value="changeRegion"
           />
-          <span v-else class="brand__city">{{ cityName || '项目分布' }}</span>
+          <span v-else-if="cityName" class="brand__city">{{ cityName }}</span>
           <CityPicker
             v-if="distributorOptions.length > 1"
             :model-value="distributorFilter"
@@ -130,7 +130,7 @@
           <template #title>
             一级告警
             <em v-if="activeAlarmCount" class="pill">进行中 {{ activeAlarmCount }}</em>
-            <small>/ {{ alarmJoined.length }} · 近 10 天</small>
+            <small v-if="alarmsLoaded && allProjects.length">/ {{ alarmJoined.length }} · 近 10 天</small>
           </template>
           <p v-if="alarmError" class="muted">{{ alarmError }}</p>
           <ul v-else-if="alarmFeed.length" class="alarms">
@@ -152,7 +152,7 @@
           </div>
         </TechPanel>
 
-        <TechPanel class="p-area" :title="`${areaCityName} · 各区项目`" :loading="loading && !allProjects.length">
+        <TechPanel class="p-area" :title="cityName ? `${cityName} · 各区项目` : '各区项目'" :loading="loading && !allProjects.length">
           <template v-if="areaRows.length > TOP_AREAS" #extra>
             <button class="mini" @click="areasExpanded = !areasExpanded">{{ areasExpanded ? '收起' : `全部 ${areaRows.length}` }}</button>
           </template>
