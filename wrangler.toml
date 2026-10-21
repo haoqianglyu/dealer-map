@@ -18,4 +18,5 @@ not_found_handling = "single-page-application"
 run_worker_first = true
 
 # Secret（不在仓库）：AMAP_JSCODE — 高德安全密钥，经 /_AMapService 代理追加 jscode
+# Secret（不在仓库）：GEO_FC_URL — 共享坐标缓存 FC（cosyhome-dealermap-geo）触发器 URL，/geo-shared 代理到其 /geo
 #   security find-generic-password -s chitu-amap-dealermap-security -w | npx wrangler secret put AMAP_JSCODE

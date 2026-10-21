@@ -177,13 +177,13 @@ export function lookupLocal(group, overrides, seed = {}, { ignoreSeedFail = fals
     const hit = seed[seedKey(district, q)]
     const pt = Array.isArray(hit) ? hit : hit?.p
     if (!pt) continue
-    if (recheck(i, hit.n)) return { lnglat: pt, level: '种子', matched: hit.n || '', source: 'seed', query: q }
+    if (recheck(i, hit.n)) return { lnglat: pt, level: hit.shared ? '共享缓存' : '种子', matched: hit.n || '', address: hit.a || '', source: hit.shared ? 'shared' : 'seed', query: q }
     firstReject = firstReject || rejected(q, hit.n)
   }
   for (const [i, q] of queries.entries()) {
     const hit = c[q]
     if (!hit?.p) continue
-    if (recheck(i, hit.n)) return { lnglat: hit.p, level: hit.l, matched: hit.n || '', source: 'cache', query: q }
+    if (recheck(i, hit.n)) return { lnglat: hit.p, level: hit.l, matched: hit.n || '', address: hit.a || '', source: 'cache', query: q }
     firstReject = firstReject || rejected(q, hit.n)
   }
   if (firstReject && !ignoreSeedFail) return firstReject
@@ -224,8 +224,17 @@ function withTimeout(run, ms = 8000) {
 const geocodeOnce = (geocoder, query) => withTimeout((cb) => geocoder.getLocation(query, cb))
 const searchOnce = (placeSearch, keyword) => withTimeout((cb) => placeSearch.search(keyword, cb))
 
-// 创建限流队列：并发 ≤ concurrency，每个请求后间隔 gap 毫秒
-export function createGeocodeQueue(AMap, { concurrency = 3, gap = 200, onResult, onFatal } = {}) {
+// 限流队列：并发 ≤ concurrency；全局 ≤ qps 次/秒（高德个人 Key 地理编码/搜索 QPS 上限 3）；
+// maxSearches：关键字搜索（「基础搜索」月配额 5000）本轮上限，超出后跳过 POI 兜底（按临时未定位处理，不缓存）
+export function createGeocodeQueue(AMap, { concurrency = 3, qps = 2.8, maxSearches = Infinity, onResult, onFatal } = {}) {
+  let nextSlot = 0
+  const slot = () => {
+    const now = Date.now()
+    const at = Math.max(now, nextSlot)
+    nextSlot = at + 1000 / qps
+    return new Promise((r) => setTimeout(r, at - now))
+  }
+  let searches = 0
   const geocoders = new Map() // 每个区县 adcode 一个 Geocoder（city 参数限定匹配范围）
   const getGeocoder = (city) => {
     if (!geocoders.has(city)) geocoders.set(city, new AMap.Geocoder({ city: city || '全国' }))
@@ -249,15 +258,14 @@ export function createGeocodeQueue(AMap, { concurrency = 3, gap = 200, onResult,
   let stopped = false
   const c = loadCache()
 
-  const sleep = () => new Promise((r) => setTimeout(r, gap))
   const pt = (loc) => {
     const l = Array.isArray(loc) ? { lng: loc[0], lat: loc[1] } : loc
     return [Number(Number(l.lng).toFixed(6)), Number(Number(l.lat).toFixed(6))]
   }
-  const confirm = (q, p, level, matched) => {
-    c[q] = { p, l: level, n: matched, t: Date.now() }
+  const confirm = (q, p, level, matched, address = '') => {
+    c[q] = { p, l: level, n: matched, a: address, t: Date.now() }
     saveCache()
-    return { lnglat: p, level, matched, source: 'amap', query: q }
+    return { lnglat: p, level, matched, address, source: 'amap', query: q }
   }
 
   async function resolveGroup(group) {
@@ -269,8 +277,8 @@ export function createGeocodeQueue(AMap, { concurrency = 3, gap = 200, onResult,
     // 第一步：Geocoder（限定区县）
     for (const [i, q] of group.queries.entries()) {
       const kw = stripPlace(group.keywords?.[i] || group.community, group)
+      await slot()
       const { status, result } = await geocodeOnce(getGeocoder(group.geoCity), q)
-      await sleep()
       if (fatal(status, result)) return null
       if (status === 'error') {
         transient = true
@@ -284,14 +292,20 @@ export function createGeocodeQueue(AMap, { concurrency = 3, gap = 200, onResult,
       const okDistrict = inDistrict(g.adcode, group)
       const okLevel = GOOD_LEVELS.has(g.level)
       const m = okLevel ? matchName(kw, tail) : 'no'
-      if (okDistrict && m === 'ok') return confirm(q, pt(g.location), g.level, tail)
+      if (okDistrict && m === 'ok') return confirm(q, pt(g.location), g.level, tail, addr)
       note({ name: '', address: addr, adcode: g.adcode, why: !okLevel ? `仅匹配到${g.level}` : !okDistrict ? '不在本区' : m === 'phase' ? '分期/分区不一致或不明确' : '名称不一致' })
     }
     // 第二步：按小区名做 POI 搜索（限定区县）
     for (const [i, kw] of (group.keywords || []).entries()) {
       const q = group.queries[i]
+      if (searches >= maxSearches) {
+        transient = true
+        note({ why: '本轮搜索配额已用完' })
+        break
+      }
+      searches++
+      await slot()
       const { status, result } = await searchOnce(getSearcher(group.geoCity), kw)
-      await sleep()
       if (fatal(status, result)) return null
       if (status === 'error') {
         transient = true
@@ -305,7 +319,7 @@ export function createGeocodeQueue(AMap, { concurrency = 3, gap = 200, onResult,
       const ok = inDist.filter((p) => matchName(name, p.name) === 'ok')
       const phased = inDist.filter((p) => matchName(name, p.name) === 'phase')
       // 项目没写分期、而区内同名小区有多个分期 → 不明确，进待校正并列出候选
-      if (ok.length && (phasesOf(name) || !phased.length)) return confirm(q, pt(ok[0].location), '兴趣点(POI)', ok[0].name)
+      if (ok.length && (phasesOf(name) || !phased.length)) return confirm(q, pt(ok[0].location), '兴趣点(POI)', ok[0].name, [ok[0].adname, ok[0].address].filter((x) => x && typeof x === 'string').join(''))
       if (ok.length || phased.length) {
         best = { name: [...ok, ...phased].map((p) => p.name).slice(0, 4).join('、'), address: '', why: '分期/分区不一致或不明确' }
         continue
@@ -344,6 +358,9 @@ export function createGeocodeQueue(AMap, { concurrency = 3, gap = 200, onResult,
     stop() {
       stopped = true
       pending.length = 0
+    },
+    get searches() {
+      return searches
     },
     get size() {
       return pending.length + running

@@ -146,7 +146,16 @@
             <button v-if="IS_DEV" class="mini" :disabled="geoPending > 0" @click="downloadSeed">导出已确认坐标</button>
           </p>
           <ul class="list fix">
-            <li v-for="g in needFix" :key="g.key">
+            <li
+              v-for="g in needFix"
+              :key="g.key"
+              :data-district="g.districtName"
+              :data-community="g.community"
+              :data-query="g.queries[0] || ''"
+              :data-count="g.count"
+              :data-reason="g.reason"
+              :data-returned="g.returned ? [g.returned.name, g.returned.address].filter(Boolean).join(' · ') : ''"
+            >
               <span class="name">{{ g.community || '名称无法识别小区' }}</span>
               <span class="meta">{{ g.districtName }} · {{ g.count }} 个 · {{ g.reason }}</span>
               <span class="meta">项目：{{ g.projects.map((p) => p.name).join('、') }}</span>
@@ -171,6 +180,7 @@ import { me, getDistributor, pickProjectEndpoint, projectPage, listAllProjects, 
 import { session } from '@/api/session'
 import { useTokenRefresh } from '@/composables/useTokenRefresh'
 import { toProject } from '@/geo/model'
+import { loadShared, postShared } from '@/geo/shared'
 import { hasAmapKey, loadAmap } from '@/geo/amap'
 import { loadOverrides, loadSeed, lookupLocal, forgetFailures, exportSeed, seedKey, createGeocodeQueue, jitter } from '@/geo/geocoder'
 import { regionInfo } from '@/utils/region'
@@ -635,11 +645,23 @@ function downloadSeed() {
   URL.revokeObjectURL(a.href)
 }
 
+// ?reverify=1：一次性复核没有高德匹配名称的旧结果（重新查询并上报共享缓存），本轮搜索上限 400 次
+const REVERIFY = route.query.reverify === '1'
+const reverifyKeys = new Set()
+const needsReverify = (r) =>
+  (r.lnglat && !r.matched && r.source !== 'override') ||
+  (r.fail && r.source === 'recheck' && !r.returned) ||
+  (r.fail && r.source === 'seed' && /需人工确认/.test(r.reason || ''))
+
 function geocodeGroups() {
   if (!geoReady) return
   for (const g of groups.value) {
-    if (geoResults[g.key] || !g.queries.length) continue
+    if (geoResults[g.key] || !g.queries.length || reverifyKeys.has(g.key)) continue
     const local = lookupLocal(g, overrides.value, seed.value, { ignoreSeedFail: retryKeys.has(g.key) })
+    if (local && REVERIFY && needsReverify(local)) {
+      reverifyKeys.add(g.key)
+      continue
+    }
     if (local) geoResults[g.key] = local
   }
   if (!queue) return
@@ -655,8 +677,13 @@ async function initAmap() {
     const AMap = await loadAmap()
     queue = createGeocodeQueue(AMap, {
       concurrency: 3,
-      gap: 200,
-      onResult: (g, res) => (geoResults[g.key] = res),
+      qps: 2.8,
+      maxSearches: REVERIFY ? 400 : 150,
+      onResult: (g, res) => {
+        geoResults[g.key] = res
+        // 新确认的小区上报共享缓存（只含归一化查询串 + 区县 adcode + 坐标 + 高德名称/地址）
+        if (res.lnglat && res.source === 'amap' && g.district) postShared({ key: res.query, adcode: g.district, lnglat: res.lnglat, matched: res.matched, address: res.address, source: res.level })
+      },
       onFatal: (info) => {
         amapNotice.value = `高德 Key 不可用（${info}）：请检查是否为「Web端(JS API)」Key 及安全密钥、域名白名单。`
       },
@@ -694,9 +721,9 @@ onMounted(async () => {
   } catch (e) {
     loadError.value = `账号信息获取失败：${e?.response?.data?.message || e?.message}`
   }
-  const [ov, sd] = await Promise.all([loadOverrides(), loadSeed(), initAmap(), loadProjects()])
+  const [ov, sd, sh] = await Promise.all([loadOverrides(), loadSeed(), loadShared(), initAmap(), loadProjects()])
   overrides.value = ov
-  seed.value = sd
+  seed.value = { ...sd, ...sh } // 共享缓存（OSS）优先，静态种子兜底
   geoReady = true
   loadGeojson(cityCode.value)
   geocodeGroups()

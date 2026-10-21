@@ -71,11 +71,34 @@ async function proxyAmap(request, url, env) {
   return res
 }
 
+// 共享小区坐标缓存：/geo-shared → Aliyun FC cosyhome-dealermap-geo /geo（URL 存 Worker secret GEO_FC_URL）
+async function proxyGeo(request, env) {
+  if (!env.GEO_FC_URL) return withHeaders(new Response('geo cache not configured', { status: 503 }))
+  if (!['GET', 'POST'].includes(request.method)) return notFound()
+  const headers = new Headers()
+  for (const h of ['authorization', 'content-type', 'if-none-match']) {
+    const v = request.headers.get(h)
+    if (v) headers.set(h, v)
+  }
+  const init = { method: request.method, headers }
+  if (request.method === 'POST') {
+    const body = await request.text()
+    if (body.length > 2048) return withHeaders(new Response('too large', { status: 413 }))
+    init.body = body
+  }
+  const upstream = await fetch(env.GEO_FC_URL.replace(/\/$/, '') + '/geo', init)
+  const res = withHeaders(upstream)
+  if (!res.headers.get('cache-control')) res.headers.set('Cache-Control', 'no-store')
+  res.headers.delete('set-cookie')
+  return res
+}
+
 export default {
   async fetch(request, env) {
     const url = new URL(request.url)
     if (url.pathname === '/api' || url.pathname.startsWith('/api/')) return proxyApi(request, url)
     if (url.pathname.startsWith('/_AMapService/')) return proxyAmap(request, url, env)
+    if (url.pathname === '/geo-shared') return proxyGeo(request, env)
     if (!['GET', 'HEAD'].includes(request.method)) return notFound()
     const res = await env.ASSETS.fetch(request)
     return withHeaders(res)

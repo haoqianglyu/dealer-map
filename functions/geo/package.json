@@ -1,0 +1,8 @@
+{
+  "name": "cosyhome-dealermap-geo",
+  "version": "1.0.0",
+  "private": true,
+  "description": "经销商项目地图：共享小区坐标缓存（Aliyun FC 3.0, Node.js 20, 无依赖）",
+  "main": "index.js",
+  "license": "UNLICENSED"
+}
