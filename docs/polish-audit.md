@@ -50,3 +50,8 @@
 ## 修复记录
 
 （Phase 2 填写）
+
+## 进度（2026-10-22，回合预算用尽暂停）
+- 已提交（未部署，分支 wip-polish）：`api/http.js` 会话失效判定（401 或 /me 的 403 → 续期 → 回登录页并整页重载，带「登录已过期」提示）、`errorText()` 中文错误文案；安装 @fontsource/barlow-semi-condensed。
+- 未开始：Login.vue 重设计、DealerMap 侧栏/顶栏/图例重排、AmapView（统一 darkblue 样式 + zoom<12 隐藏 point 要素 + 自有城市/区县标签、细环标记、比例尺移到左下、首屏 setBounds、弹窗避让）、warmLights 远景加大、CityPicker 细调、TechPanel 去 DataV、首屏并行加载、加载态骨架、logout 整页重载、Codex 评审、部署。
+- 续做顺序：logout/重载 → 首屏并行 + 加载态 + 白闪 → AmapView → 侧栏/顶栏/图例 → 登录页 → 截图矩阵 → tests/marker-click.sh → Codex → 部署。
