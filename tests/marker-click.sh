@@ -21,7 +21,7 @@ echo "popover open: $pop"
 echo PASS-BASIC
 
 # 3) 进行中告警的小区：经告警列表飞到该小区 → 关闭弹窗 → 直接点红色标记 → 弹窗里应有告警行（时间/设备/内容）
-ab eval '[...document.querySelectorAll(".list.alarms li.on:not(.off)")].find(l=>l.innerText.includes("金科蠡湖"))?.click() || document.querySelector(".list.alarms li.on:not(.off)")?.click(); 1' >/dev/null; sleep 2
+ab eval '[...document.querySelectorAll(".alarms li.on:not(.off)")].find(l=>l.innerText.includes("金科蠡湖"))?.click() || document.querySelector(".alarms li.on:not(.off)")?.click(); 1' >/dev/null; sleep 2
 # 关弹窗：在地图空白处真实点击一次（找一个不在标记/弹窗/面板上的点）
 pt=$(ab eval 'JSON.stringify((()=>{for(let y=200;y<900;y+=37)for(let x=100;x<1300;x+=41){const el=document.elementFromPoint(x,y);if(el&&el.closest(".amap")&&!el.closest(".dm-mk")&&!el.closest(".dm-pop")&&!el.closest(".amap-marker"))return [x,y]}return null})())' | tr -d '"\\[]')
 ab mouse move ${pt%,*} ${pt#*,} >/dev/null; ab mouse down >/dev/null; ab mouse up >/dev/null; sleep 1

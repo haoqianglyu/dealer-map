@@ -9,11 +9,11 @@ export const PALETTES = {
 
 // 5 档：count 下限 → 峰值 α、外晕半径（米）、远景最小外晕像素；大小主要靠外晕增长，芯与灯丝保持很小
 const TIERS = [
-  { min: 20, peak: 0.95, r: 200, minPx: 46, idx: 4 },
-  { min: 10, peak: 0.86, r: 160, minPx: 37, idx: 3 },
-  { min: 5, peak: 0.78, r: 125, minPx: 29, idx: 2 },
-  { min: 2, peak: 0.7, r: 95, minPx: 22, idx: 1 },
-  { min: 1, peak: 0.62, r: 70, minPx: 16, idx: 0 },
+  { min: 20, peak: 0.95, r: 200, minPx: 68, idx: 4 },
+  { min: 10, peak: 0.86, r: 160, minPx: 52, idx: 3 },
+  { min: 5, peak: 0.78, r: 125, minPx: 40, idx: 2 },
+  { min: 2, peak: 0.7, r: 95, minPx: 30, idx: 1 },
+  { min: 1, peak: 0.62, r: 70, minPx: 22, idx: 0 },
 ]
 export const tierOf = (n) => TIERS.find((t) => n >= t.min)
 
@@ -60,7 +60,7 @@ export function createWarmLights(AMap, map) {
     if (!lights.length) return
     const res = map.getResolution() // 米/像素（视野中心）
     // 远景（zoom < 12）按 2^((zoom−12)·0.4) 缩小最小像素，城市级视图里各小区灯光才分得开
-    const zoomScale = Math.min(2, Math.pow(2, (map.getZoom() - 12) * 0.4)) // 近景放大（最多 2 倍），远景缩小
+    const zoomScale = Math.min(2, Math.max(1, Math.pow(2, (map.getZoom() - 12) * 0.4))) // 近景放大（最多 2 倍），远景不再缩小（城市级要读得出热）
     // 密集处降低外晕 α：按 24px 网格统计邻近灯数
     const cell = 24
     const pts = lights.map((l) => ({ l, px: map.lngLatToContainer(l.lnglat) }))
@@ -86,7 +86,7 @@ export function createWarmLights(AMap, map) {
       const t = tierOf(l.count)
       if (!t) continue
       const R = Math.max(t.r / res, Math.max(8, t.minPx * zoomScale))
-      const crowd = Math.max(0.45, 1 / (1 + 0.12 * (density(px) - 1)))
+      const crowd = Math.max(0.6, 1 / (1 + 0.12 * (density(px) - 1)))
       if (px.x < -R || px.y < -R || px.x > w + R || px.y > h + R) continue
       // 外晕：宽、很柔、低饱和；芯：小；灯丝：极小的近白亮点（各档几乎同大）
       if (l.pulse) pulsing = true
@@ -95,6 +95,18 @@ export function createWarmLights(AMap, map) {
       glow(ctx, px.x, px.y, 2.6 + t.idx * 0.45, filament, t.peak)
     }
     ctx.globalCompositeOperation = 'source-over'
+    // 告警热力：灯心标注进行中条数
+    ctx.font = '600 12px "DM Num", "PingFang SC", sans-serif'
+    ctx.textAlign = 'center'
+    ctx.textBaseline = 'middle'
+    for (const { l, px } of pts) {
+      if (!l.label || px.x < 0 || px.y < 0 || px.x > w || px.y > h) continue
+      ctx.lineWidth = 3
+      ctx.strokeStyle = 'rgba(40, 10, 4, 0.75)'
+      ctx.strokeText(String(l.label), px.x, px.y - 14)
+      ctx.fillStyle = '#FFF0E0'
+      ctx.fillText(String(l.label), px.x, px.y - 14)
+    }
     if (pulsing) schedule() // 有呼吸灯时持续逐帧重绘
   }
   const schedule = () => {
