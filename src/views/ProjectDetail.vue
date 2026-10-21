@@ -1,8 +1,9 @@
 <template>
-  <div class="pd">
+  <div class="pd-screen">
+  <div class="pd" :style="screenStyle">
     <!-- 页头：与 niuniu 相同结构（左 logo / 中标题 / 右 时间 + 返回上一页 + 退出登录） -->
     <header class="pd__head">
-      <div class="pd__logo"><span class="mark">COSY</span><span class="name">{{ brand }}</span></div>
+      <div class="pd__logo"><BrandLogo :name="brand" :height="38" /></div>
       <h1 class="pd__title">{{ brand }} · 项目详情</h1>
       <div class="pd__right">
         <span class="pd__clock">{{ clock }}</span>
@@ -207,6 +208,7 @@
       </div>
     </aside>
   </div>
+  </div>
 </template>
 
 <script setup>
@@ -215,6 +217,8 @@
 import { ref, reactive, computed, onMounted, onBeforeUnmount, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import CityPicker from '@/components/CityPicker.vue'
+import { useScreenScale } from '@/composables/useScreenScale'
+import BrandLogo from '@/components/BrandLogo.vue'
 import { session } from '@/api/session'
 import EChart from '@/components/EChart.vue'
 import { me, getDistributor, getProject, getProjectConfig, getDeviceDataList, getDeviceCategories, getDeviceModels, listAlarms } from '@/api'
@@ -225,6 +229,7 @@ import { tooltipStyle, categoryAxis, valueAxis } from '@/utils/chartTheme'
 import { isShowroom, showName } from '@/utils/showroom'
 
 defineOptions({ name: 'ProjectDetail' })
+const screenStyle = useScreenScale()
 const clock = ref('')
 const WEEK = '日一二三四五六'
 function tickClock() {
@@ -537,6 +542,12 @@ onBeforeUnmount(() => {
 
 <style scoped lang="scss">
 /* 版式与 niuniu room-detail 一致（直角细边框面板、标题左上），颜色用 dealer-map 主题变量 */
+.pd-screen {
+  position: fixed;
+  inset: 0;
+  overflow: hidden;
+  background: var(--dm-page-bg, #050d1d);
+}
 .pd {
   --pd-bg: var(--dm-page-bg, #050d1d);
   --pd-panel: var(--dm-panel-bg, #071630);
@@ -544,8 +555,11 @@ onBeforeUnmount(() => {
   --pd-text: var(--dm-text, #d8ecff);
   --pd-muted: var(--dm-text-muted, #93b5d6);
   --pd-accent: var(--dm-accent, #00d4ff);
-  position: fixed;
-  inset: 0;
+  /* 1920×1080 设计画布，居中后整体缩放（见 useScreenScale） */
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform-origin: 0 0;
   display: flex;
   flex-direction: column;
   color: var(--pd-text);
@@ -562,11 +576,7 @@ onBeforeUnmount(() => {
 }
 .pd__logo {
   display: flex;
-  align-items: stretch;
-  height: 44px;
-  border: 1px solid var(--pd-accent);
-  border-radius: 3px;
-  overflow: hidden;
+  align-items: center;
   .mark {
     display: flex;
     align-items: center;
@@ -868,8 +878,7 @@ onBeforeUnmount(() => {
   margin-right: 20px;
   display: grid;
   grid-template-columns: repeat(5, minmax(0, 1fr));
-  grid-template-rows: repeat(2, minmax(0, 140px)); /* 紧凑卡片（约 140px） */
-  align-content: center;
+  grid-template-rows: repeat(2, minmax(0, 1fr)); /* 1080 设计稿下约 120px，1300 高屏幕约 145px */
   gap: 12px;
   scroll-snap-align: start;
   &:last-child {

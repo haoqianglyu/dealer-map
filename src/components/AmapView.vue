@@ -196,7 +196,7 @@ onMounted(() => {
     const t = e.target.closest && e.target.closest('[data-pid]')
     if (t) emit('open-project', t.getAttribute('data-pid'))
   })
-  map.addControl(new AMap.Scale({ position: { left: '24px', bottom: '78px' } })) // 放在左下图例上方，避开图例与高德 logo
+  map.addControl(new AMap.Scale({ position: { left: '24px', top: '96px' } })) // 放左上顶栏下方：左下图例随屏幕缩放会变高，放上面不会互相遮挡
   if (props.center) centerOn(props.center)
   info = new AMap.InfoWindow({ isCustom: true, offset: new AMap.Pixel(0, -20), anchor: 'bottom-center' })
   heat = createWarmLights(AMap, map)
