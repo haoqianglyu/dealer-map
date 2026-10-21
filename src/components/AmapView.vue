@@ -20,7 +20,8 @@ const props = defineProps({
   center: { type: Array, default: null },
   focus: { type: Object, default: null }, // { key, n }：飞到该小区并打开弹窗
   fit: { type: Object, default: null }, // { points, n }：适配视野到这些点
-  avoid: { type: Object, default: () => ({ top: 72, right: 420, bottom: 90, left: 24 }) }, // 被界面占用的屏幕边距（px）
+  avoid: { type: Object, default: () => ({ top: 96, right: 420, bottom: 90, left: 24 }) }, // 被界面占用的屏幕边距（px）
+  scale: { type: Number, default: 1 }, // 界面缩放：标记 / 弹窗只放大不缩小（2560 下与界面同比例）
 })
 const emit = defineEmits(['open-project', 'ready'])
 
@@ -35,6 +36,13 @@ let markers = []
 let labels = []
 let level = null
 let pop = null // { c, all, open: Set<projectId> }
+let readySent = false
+const ready = () => {
+  if (readySent) return
+  readySent = true
+  emit('ready')
+}
+const k = () => Math.max(1, props.scale)
 
 const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c])
 const levelFor = (z) => (z < ZOOM_SPLIT ? 'district' : z < ZOOM_NAMES ? 'community' : 'named')
@@ -183,7 +191,12 @@ function renderLabels() {
   const { AMap } = props
   // 城市名只画在附近没有区县气泡的城市（有气泡的城市由区县名说明位置，避免压字）
   const near = (a, b) => Math.abs(a[0] - b[0]) < 0.2 && Math.abs(a[1] - b[1]) < 0.15
-  labels = props.cityLabels.filter((c) => !props.districts.some((d) => near(d.lnglat, c.lnglat))).map(
+  const { width } = map.getSize()
+  const inUi = (ll) => {
+    const p = map.lngLatToContainer(ll)
+    return p.y < props.avoid.top || p.x > width - props.avoid.right
+  }
+  labels = props.cityLabels.filter((c) => !props.districts.some((d) => near(d.lnglat, c.lnglat)) && !inUi(c.lnglat)).map(
     (c) => new AMap.Marker({ position: c.lnglat, anchor: 'center', content: `<div class="dm-city">${esc(c.name)}</div>`, zIndex: 100, bubble: true, clickable: false })
   )
   if (props.mode === 'heat') {
@@ -236,11 +249,16 @@ function renderMarkers() {
     })
   }
   map.add(markers)
+  if (markers.length) requestAnimationFrame(ready)
 }
 
+// 底图要素按缩放分档：远景只留底色 + 道路（地名由我们画）；12–14 级加建筑；≥14 级才显示 POI 地名；热力模式任何级别都不显示 POI
+let featuresNow = ''
 function applyFeatures() {
-  // 远景：只留底色 + 道路（地名由我们画）；近景：恢复建筑与 POI 作为参照
-  map.setFeatures(level === 'district' ? ['bg', 'road'] : ['bg', 'road', 'building', 'point'])
+  const f = level === 'district' ? ['bg', 'road'] : level === 'named' && props.mode !== 'heat' ? ['bg', 'road', 'building', 'point'] : ['bg', 'road', 'building']
+  if (f.join() === featuresNow) return
+  featuresNow = f.join()
+  map.setFeatures(f)
 }
 
 function renderHeat() {
@@ -271,15 +289,21 @@ function onZoom() {
   if (next !== level) {
     const crossedSplit = (next === 'district') !== (level === 'district')
     level = next
-    if (crossedSplit) {
-      info.close()
-      applyFeatures()
-    }
+    if (crossedSplit) info.close()
+    applyFeatures()
     renderMarkers()
     renderLabels()
   }
 }
 
+// × 用 pointerdown 直接关闭（捕获阶段，高德 InfoWindow 内部吞掉 click 时也可靠）
+function onPopDown(e) {
+  const t = e.target.closest && e.target.closest('[data-act="close"]')
+  if (!t) return
+  e.stopPropagation()
+  e.preventDefault()
+  info && info.close()
+}
 function onPopClick(e) {
   const t = e.target.closest && e.target.closest('[data-act],[data-pid]')
   if (!t) return
@@ -306,17 +330,21 @@ onMounted(() => {
     mapStyle: MAP_STYLE,
   })
   el.value.addEventListener('click', onPopClick)
+  el.value.addEventListener('pointerdown', onPopDown, true)
   map.addControl(new AMap.Scale()) // 位置 / 样式由下方 CSS 覆盖（左下、图例上方）
   if (props.center) centerOn(props.center)
-  info = new AMap.InfoWindow({ isCustom: true, autoMove: false, offset: new AMap.Pixel(0, -22), anchor: 'bottom-center' })
+  info = new AMap.InfoWindow({ isCustom: true, autoMove: false, offset: new AMap.Pixel(0, -22 * k()), anchor: 'bottom-center' })
+  el.value.style.setProperty('--k', k())
   info.on('close', () => (pop = null))
   heat = createWarmLights(AMap, map)
   level = levelFor(map.getZoom())
   applyFeatures()
   map.on('zoomend', onZoom)
+  map.on('moveend', () => level === 'district' && renderLabels())
   map.on('click', () => info.close())
-  map.on('complete', () => emit('ready'))
-  setTimeout(() => emit('ready'), 2500) // 兜底：complete 事件偶尔不触发 / 瓦片迟迟不到时也不要一直挡着
+  // 底图 complete / 首批标记画出 / 1.2 s 兜底：三者最早者收起首屏罩
+  map.on('complete', ready)
+  setTimeout(ready, 1200)
   render()
 })
 
@@ -325,6 +353,7 @@ watch(
   () => [props.mode, props.heatMetric],
   () => {
     info && info.close()
+    applyFeatures()
     render()
   }
 )
@@ -339,6 +368,14 @@ function focusCommunity(key) {
 watch(
   () => props.focus,
   (f) => f && focusCommunity(f.key)
+)
+watch(
+  () => props.scale,
+  () => {
+    if (!el.value) return
+    el.value.style.setProperty('--k', k())
+    info && info.setOffset && info.setOffset(new props.AMap.Pixel(0, -22 * k()))
+  }
 )
 watch(
   () => props.fit,
@@ -362,6 +399,7 @@ onBeforeUnmount(() => {
     heat && heat.destroy()
     map.off('zoomend', onZoom)
     el.value && el.value.removeEventListener('click', onPopClick)
+    el.value && el.value.removeEventListener('pointerdown', onPopDown, true)
     map.destroy()
   }
   map = heat = info = null
@@ -412,9 +450,9 @@ onBeforeUnmount(() => {
   align-items: center;
   justify-content: center;
   border-radius: 50%;
-  border: 2px solid var(--c);
+  border: calc(2px * var(--k, 1)) solid var(--c);
   background: color-mix(in srgb, var(--c) 12%, rgba(4, 11, 24, 0.55));
-  box-shadow: inset 0 0 18px color-mix(in srgb, var(--c) 28%, transparent);
+  box-shadow: inset 0 0 calc(18px * var(--k, 1)) color-mix(in srgb, var(--c) 28%, transparent);
   cursor: pointer;
   transition: transform 0.12s ease;
 }
@@ -425,46 +463,46 @@ onBeforeUnmount(() => {
   color: #fff;
 }
 .dm-mk__n {
-  font: 600 13px/1 var(--dm-num);
+  font: 600 calc(13px * var(--k, 1))/1 var(--dm-num);
   color: #fff;
   font-variant-numeric: tabular-nums;
 }
 .dm-mk--district .dm-mk__n {
-  font-size: 20px;
+  font-size: calc(20px * var(--k, 1));
 }
 .dm-mk__badge {
   position: absolute;
   top: -9px;
-  left: calc(100% - 12px);
-  height: 20px;
-  padding: 0 7px;
-  font: 600 12px/20px var(--dm-font);
+  left: calc(100% - calc(12px * var(--k, 1)));
+  height: calc(20px * var(--k, 1));
+  padding: 0 calc(7px * var(--k, 1));
+  font: 600 calc(12px * var(--k, 1))/calc(20px * var(--k, 1)) var(--dm-font);
   color: #fff;
   white-space: nowrap;
   background: #ff4d4f;
-  border-radius: 10px;
-  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.4);
+  border-radius: calc(10px * var(--k, 1));
+  box-shadow: 0 calc(2px * var(--k, 1)) calc(6px * var(--k, 1)) rgba(0, 0, 0, 0.4);
 }
 .dm-mk:not(.dm-mk--district) .dm-mk__badge {
   top: -8px;
-  height: 18px;
-  padding: 0 6px;
-  font-size: 11px;
-  line-height: 18px;
+  height: calc(18px * var(--k, 1));
+  padding: 0 calc(6px * var(--k, 1));
+  font-size: calc(11px * var(--k, 1));
+  line-height: calc(18px * var(--k, 1));
 }
 .dm-mk__label {
   position: absolute;
-  top: calc(100% + 5px);
+  top: calc(100% + calc(5px * var(--k, 1)));
   left: 50%;
   transform: translateX(-50%);
   white-space: nowrap;
-  font-size: 13px;
+  font-size: calc(13px * var(--k, 1));
   color: #d8ecff;
   paint-order: stroke;
-  -webkit-text-stroke: 3px rgba(4, 11, 24, 0.9);
+  -webkit-text-stroke: calc(3px * var(--k, 1)) rgba(4, 11, 24, 0.9);
 }
 .dm-mk:not(.dm-mk--district) .dm-mk__label {
-  font-size: 12px;
+  font-size: calc(12px * var(--k, 1));
   color: #b7d3f0;
 }
 .dm-mk--pulse::after {
@@ -472,7 +510,7 @@ onBeforeUnmount(() => {
   position: absolute;
   inset: -2px;
   border-radius: 50%;
-  border: 2px solid var(--c);
+  border: calc(2px * var(--k, 1)) solid var(--c);
   animation: dm-pulse 2.4s ease-out infinite;
 }
 @keyframes dm-pulse {
@@ -486,37 +524,37 @@ onBeforeUnmount(() => {
   }
 }
 .dm-city {
-  font-size: 14px;
+  font-size: calc(14px * var(--k, 1));
   font-weight: 500;
-  letter-spacing: 2px;
+  letter-spacing: calc(2px * var(--k, 1));
   color: #6f8fb8;
   white-space: nowrap;
   pointer-events: none;
   paint-order: stroke;
-  -webkit-text-stroke: 3px rgba(4, 11, 24, 0.85);
+  -webkit-text-stroke: calc(3px * var(--k, 1)) rgba(4, 11, 24, 0.85);
 }
 .dm-hlabel {
-  font-size: 12px;
+  font-size: calc(12px * var(--k, 1));
   color: #ffde9e;
   white-space: nowrap;
   pointer-events: none;
   paint-order: stroke;
-  -webkit-text-stroke: 3px rgba(10, 8, 4, 0.85);
+  -webkit-text-stroke: calc(3px * var(--k, 1)) rgba(10, 8, 4, 0.85);
 }
 .dm-hlabel b {
-  font: 600 13px var(--dm-num);
+  font: 600 calc(13px * var(--k, 1)) var(--dm-num);
 }
 
 /* ---------- 小区弹窗 ---------- */
 .dm-pop {
   position: relative;
-  width: 360px;
-  font-size: 13px;
+  width: calc(360px * var(--k, 1));
+  font-size: calc(13px * var(--k, 1));
   color: #d8ecff;
   background: rgba(6, 16, 36, 0.97);
   border: 1px solid rgba(120, 170, 255, 0.2);
-  border-radius: 10px;
-  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.5);
+  border-radius: calc(10px * var(--k, 1));
+  box-shadow: 0 calc(16px * var(--k, 1)) calc(40px * var(--k, 1)) rgba(0, 0, 0, 0.5);
   animation: dm-pop-in 0.16s ease-out;
   transform-origin: 50% 100%;
 }
@@ -530,8 +568,8 @@ onBeforeUnmount(() => {
   position: absolute;
   left: 50%;
   bottom: -6px;
-  width: 12px;
-  height: 12px;
+  width: calc(12px * var(--k, 1));
+  height: calc(12px * var(--k, 1));
   background: rgba(6, 16, 36, 0.97);
   border-right: 1px solid rgba(120, 170, 255, 0.2);
   border-bottom: 1px solid rgba(120, 170, 255, 0.2);
@@ -541,17 +579,17 @@ onBeforeUnmount(() => {
   position: relative;
   display: flex;
   flex-direction: column;
-  gap: 3px;
-  padding: 12px 40px 10px 14px;
+  gap: calc(3px * var(--k, 1));
+  padding: calc(12px * var(--k, 1)) calc(40px * var(--k, 1)) calc(10px * var(--k, 1)) calc(14px * var(--k, 1));
   border-bottom: 1px solid rgba(120, 170, 255, 0.1);
 }
 .dm-pop__h b {
-  font-size: 16px;
+  font-size: calc(16px * var(--k, 1));
   font-weight: 600;
   color: #f2f7ff;
 }
 .dm-pop__h span {
-  font-size: 12px;
+  font-size: calc(12px * var(--k, 1));
   color: #8fb0d0;
 }
 .dm-pop__h em {
@@ -560,16 +598,16 @@ onBeforeUnmount(() => {
 }
 .dm-pop__x {
   position: absolute;
-  top: 8px;
-  right: 8px;
-  width: 26px;
-  height: 26px;
-  font-size: 18px;
+  top: calc(6px * var(--k, 1));
+  right: calc(6px * var(--k, 1));
+  width: calc(32px * var(--k, 1));
+  height: calc(32px * var(--k, 1));
+  font-size: calc(18px * var(--k, 1));
   line-height: 1;
   color: #8fb0d0;
   background: none;
   border: 0;
-  border-radius: 6px;
+  border-radius: calc(6px * var(--k, 1));
   cursor: pointer;
 }
 .dm-pop__x:hover {
@@ -577,23 +615,23 @@ onBeforeUnmount(() => {
   background: rgba(255, 255, 255, 0.08);
 }
 .dm-pop ul {
-  max-height: 300px;
+  max-height: calc(300px * var(--k, 1));
   overflow-y: auto;
   list-style: none;
   margin: 0;
-  padding: 4px 0;
+  padding: calc(4px * var(--k, 1)) 0;
 }
 .dm-pop li.pj {
   display: grid;
-  grid-template-columns: 8px 1fr auto auto;
+  grid-template-columns: calc(8px * var(--k, 1)) 1fr auto auto;
   align-items: center;
-  gap: 10px;
-  height: 32px;
-  padding: 0 14px;
+  gap: calc(10px * var(--k, 1));
+  height: calc(32px * var(--k, 1));
+  padding: 0 calc(14px * var(--k, 1));
 }
 .dm-pop li i {
-  width: 8px;
-  height: 8px;
+  width: calc(8px * var(--k, 1));
+  height: calc(8px * var(--k, 1));
   border-radius: 50%;
 }
 .dm-pop li .n {
@@ -617,21 +655,21 @@ onBeforeUnmount(() => {
 }
 .dm-pop li.al {
   display: grid;
-  grid-template-columns: 6px auto 1fr auto;
+  grid-template-columns: calc(6px * var(--k, 1)) auto 1fr auto;
   align-items: center;
-  gap: 6px;
-  padding: 3px 14px 3px 32px;
-  font-size: 12px;
+  gap: calc(6px * var(--k, 1));
+  padding: calc(3px * var(--k, 1)) calc(14px * var(--k, 1)) calc(3px * var(--k, 1)) calc(32px * var(--k, 1));
+  font-size: calc(12px * var(--k, 1));
   color: #8fb0d0;
 }
 .dm-pop li.al i {
-  width: 6px;
-  height: 6px;
+  width: calc(6px * var(--k, 1));
+  height: calc(6px * var(--k, 1));
 }
 .dm-pop li.al--sum {
-  grid-template-columns: 6px 1fr auto;
+  grid-template-columns: calc(6px * var(--k, 1)) 1fr auto;
   cursor: pointer;
-  border-radius: 4px;
+  border-radius: calc(4px * var(--k, 1));
 }
 .dm-pop li.al--sum:hover {
   background: rgba(53, 212, 255, 0.06);
@@ -648,15 +686,15 @@ onBeforeUnmount(() => {
 }
 .dm-pop__all {
   display: block;
-  width: calc(100% - 28px);
-  margin: 0 14px 12px;
-  height: 30px;
+  width: calc(100% - calc(28px * var(--k, 1)));
+  margin: 0 calc(14px * var(--k, 1)) calc(12px * var(--k, 1));
+  height: calc(30px * var(--k, 1));
   font: inherit;
-  font-size: 12px;
+  font-size: calc(12px * var(--k, 1));
   color: #35d4ff;
   background: rgba(53, 212, 255, 0.06);
   border: 1px solid rgba(53, 212, 255, 0.25);
-  border-radius: 6px;
+  border-radius: calc(6px * var(--k, 1));
   cursor: pointer;
 }
 .dm-pop__all:hover {

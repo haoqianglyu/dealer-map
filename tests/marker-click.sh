@@ -36,6 +36,17 @@ rows=$(ab eval 'JSON.stringify([...document.querySelectorAll(".dm-pop li.al")].f
 echo "alarm rows: $rows"
 case "$rows" in *级*) echo PASS-ALARM ;; *) exit 1;; esac
 
+# 3b) 展开告警 → 真实鼠标点 × → 弹窗应关闭；再点红色标记重新打开（供第 4 步用）
+xy() { ab eval "JSON.stringify((()=>{const a=[...document.querySelectorAll('$1')].find(x=>x.offsetParent);if(!a)return null;const r=a.getBoundingClientRect();return [Math.round(r.x+r.width/2),Math.round(r.y+r.height/2)]})())" | tr -d '"\\[]'; }
+real() { ab mouse move ${1%,*} ${1#*,} >/dev/null; ab mouse down >/dev/null; ab mouse up >/dev/null; }
+sum=$(xy '.dm-pop li.al--sum'); [ -n "$sum" ] && [ "$sum" != "null" ] && real "$sum"; sleep 0.6
+x=$(xy '.dm-pop__x'); echo "close btn at: $x"; [ -n "$x" ] && [ "$x" != "null" ] || exit 1
+real "$x"; sleep 0.8
+gone=$(ab eval '[...document.querySelectorAll(".dm-pop")].some(p=>p.offsetParent) ? 0 : 1' | tr -d '"')
+echo "closed by x: $gone"; [ "$gone" = "1" ] || exit 1
+real "$red"; sleep 1
+echo PASS-CLOSE
+
 # 4) 弹窗「详情 ›」→ 项目二级界面；返回地图后标记仍在（keep-alive 保留视图）
 before=$(ab eval 'document.querySelectorAll(".dm-mk").length' | tr -d '"')
 go=$(ab eval 'JSON.stringify((()=>{const a=[...document.querySelectorAll(".dm-pop .go")].find(x=>x.offsetParent);if(!a)return null;const r=a.getBoundingClientRect();return [Math.round(r.x+r.width/2),Math.round(r.y+r.height/2)]})())' | tr -d '"\\[]')

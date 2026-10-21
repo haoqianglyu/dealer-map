@@ -8,7 +8,7 @@
         <BrandLogo v-if="brand" :name="brand.name" :height="44" class="stage__logo" />
         <div class="stage__copy">
           <h1>项目分布与运行告警</h1>
-          <p>{{ brand ? `${brand.name} · ` : '' }}实时项目分布 · 一级告警 · 设备运行</p>
+          <p>实时项目分布 · 一级告警 · 设备运行</p>
         </div>
         <div class="stage__foot">© {{ year }} {{ brand ? brand.name : '项目分布大屏' }}</div>
       </div>
@@ -83,7 +83,7 @@ const year = new Date().getFullYear()
 const ACCOUNT_KEY = 'dm_last_account' // 只记账号，不存密码
 
 const mobile = ref(localStorage.getItem(ACCOUNT_KEY) || '')
-const remember = ref(Boolean(localStorage.getItem(ACCOUNT_KEY)))
+const remember = ref(localStorage.getItem('dm_remember') !== '0') // 首次默认勾选
 const password = ref('')
 const showPwd = ref(false)
 const caps = ref(false)
@@ -118,6 +118,7 @@ async function submit() {
     if (!data?.access_token) throw new Error('登录失败')
     session.save(data)
     remember.value ? localStorage.setItem(ACCOUNT_KEY, mobile.value) : localStorage.removeItem(ACCOUNT_KEY)
+    localStorage.setItem('dm_remember', remember.value ? '1' : '0')
     password.value = ''
     busy.value = false
     done.value = true
@@ -396,11 +397,14 @@ onBeforeUnmount(() => cancelAnimationFrame(raf))
   border-radius: 6px;
   transform: translateY(-50%);
   cursor: pointer;
-  &:hover,
-  &:focus-visible {
+  &:hover {
     color: #e8f4ff;
     background: rgba(255, 255, 255, 0.06);
+  }
+  &:focus-visible {
+    color: #e8f4ff;
     outline: none;
+    box-shadow: 0 0 0 2px #35d4ff inset;
   }
 }
 .remember {
@@ -417,6 +421,10 @@ onBeforeUnmount(() => cancelAnimationFrame(raf))
     height: 16px;
     accent-color: #35d4ff;
     cursor: pointer;
+    &:focus-visible {
+      outline: 2px solid #35d4ff;
+      outline-offset: 2px;
+    }
   }
 }
 .submit {

@@ -14,6 +14,7 @@
         :focus="focus"
         :fit="fit"
         :avoid="avoid"
+        :scale="scale"
         @open-project="openProject"
         @ready="mapReady = true"
       />
@@ -35,7 +36,7 @@
     </transition>
 
     <!-- 叠加界面层：按 1920×1080 设计稿与详情页同比例缩放；层本身透明且不接收鼠标 -->
-    <div class="ui" :style="uiStyle">
+    <div class="ui" :class="{ compact }" :style="uiStyle">
       <header class="topbar">
         <div class="brand">
           <transition name="fade" mode="out-in">
@@ -139,7 +140,9 @@
               :key="a.id"
               :class="{ on: a.active, fresh: a.fresh, off: !a.located }"
               :title="a.located ? `${fmtAbs(a.ts)} · 点击定位到小区` : `${fmtAbs(a.ts)} · 该小区尚未定位`"
+              :tabindex="a.located ? 0 : -1"
               @click="focusAlarm(a)"
+              @keydown.enter.prevent="focusAlarm(a)"
             >
               <span class="l1"><b class="name">{{ a.label }}</b><small>{{ a.district }}</small><span class="t">{{ fmtRel(a.ts) }}</span></span>
               <span class="l2"><span class="meta">{{ a.device }} · {{ a.content }}</span><em v-if="!a.active" class="tag">{{ a.status === 1 ? '已恢复' : '已处理' }}</em></span>
@@ -233,7 +236,7 @@ const SIDE_W = 380 // 侧栏宽（设计稿像素）
 // 地图上被界面占用的区域（屏幕像素）：弹窗/飞行/适配视野时避开
 const avoid = computed(() => {
   const s = scale.value
-  return { top: Math.round(72 * s), right: Math.round((SIDE_W + 16 + 24) * s), bottom: Math.round(34 + 60 * s), left: Math.round(24 * s) }
+  return { top: Math.round(96 * s), right: Math.round((SIDE_W + 16 + 24) * s), bottom: Math.round(34 + 60 * s), left: Math.round(24 * s) }
 })
 const HEAT_TIERS = [
   { label: '1', color: 'rgba(255,184,87,0.35)' },
@@ -518,8 +521,9 @@ const districtStats = computed(() => {
 })
 
 // 区县面板：只列主城市（所选城市 / 经销商所在城市）的区县，不含其它城市与城市汇总行
-const TOP_AREAS = 9
+const TOP_AREAS_FULL = 9
 const areasExpanded = ref(false)
+const TOP_AREAS = computed(() => (compact.value ? 5 : TOP_AREAS_FULL))
 const areaCityName = computed(() => cityName.value || '本市')
 const areaRows = computed(() => {
   const m = new Map()
@@ -796,7 +800,7 @@ onBeforeUnmount(() => {
   justify-content: center;
   gap: 18px;
   pointer-events: none;
-  background: radial-gradient(60% 70% at 50% 50%, rgba(27, 98, 216, 0.14), transparent 70%), var(--dm-bg);
+  background: radial-gradient(60% 70% at 50% 50%, rgba(27, 98, 216, 0.14), transparent 70%), rgba(6, 16, 36, 0.92);
   &__logo {
     animation: breathe 2.4s ease-in-out infinite;
   }
@@ -848,12 +852,12 @@ onBeforeUnmount(() => {
   top: 0;
   left: 0;
   right: 0;
-  height: 88px;
-  padding: 0 24px 24px;
+  height: 96px;
+  padding: 0 24px 32px;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  background: linear-gradient(180deg, rgba(4, 11, 24, 0.85), rgba(4, 11, 24, 0.5) 60%, transparent);
+  background: linear-gradient(180deg, rgba(4, 11, 24, 0.92) 0, rgba(4, 11, 24, 0.8) 64px, rgba(4, 11, 24, 0) 96px);
   pointer-events: none;
   z-index: 10;
   > * {
@@ -961,7 +965,7 @@ onBeforeUnmount(() => {
   }
   small {
     margin-top: 3px;
-    font-size: 11px;
+    font-size: 12px;
     color: var(--dm-text-3);
   }
 }
@@ -1148,9 +1152,12 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: center;
   gap: 8px;
+  padding: 3px 10px;
   font-size: 12px;
-  color: #6f8fb8;
-  text-shadow: 0 0 6px rgba(4, 11, 24, 0.9);
+  color: #7f9cc0;
+  background: rgba(4, 11, 24, 0.72);
+  border-radius: 6px;
+  backdrop-filter: blur(6px);
   font-variant-numeric: tabular-nums;
   .ring {
     width: 12px;
@@ -1241,6 +1248,12 @@ onBeforeUnmount(() => {
 .p-area {
   flex: none;
   height: 260px;
+}
+.compact .p-area {
+  height: 176px;
+}
+.compact .alarms li {
+  height: 46px;
 }
 .p-trend {
   flex: none;
