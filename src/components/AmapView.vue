@@ -339,6 +339,7 @@ onMounted(() => {
   heat = createWarmLights(AMap, map)
   level = levelFor(map.getZoom())
   applyFeatures()
+  if (props.fit?.points?.length) fitBounds(boundsOf(props.fit.points), padding(40)) // 地图挂载前已算好的适配
   map.on('zoomend', onZoom)
   map.on('moveend', () => level === 'district' && renderLabels())
   map.on('click', () => info.close())
@@ -444,8 +445,8 @@ onBeforeUnmount(() => {
 
 .dm-mk {
   position: relative;
-  width: var(--size);
-  height: var(--size);
+  width: calc(var(--size) * var(--k, 1));
+  height: calc(var(--size) * var(--k, 1));
   display: flex;
   align-items: center;
   justify-content: center;

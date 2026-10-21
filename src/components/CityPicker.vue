@@ -115,6 +115,7 @@ function onKey(e) {
     close()
   } else if (e.key === 'ArrowDown') {
     e.preventDefault()
+    if (active.value >= shown.value.length - 1 && hiddenCount.value) expanded.value = true // 到底自动展开「更多」
     active.value = Math.min(shown.value.length - 1, active.value + 1)
     scrollActive()
   } else if (e.key === 'ArrowUp') {

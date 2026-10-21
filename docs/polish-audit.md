@@ -58,3 +58,17 @@ Fable 已做：登录页重设计（品牌舞台 = 预烘焙 0.01° 粗网格灯
 - 已提交（未部署，分支 wip-polish）：`api/http.js` 会话失效判定（401 或 /me 的 403 → 续期 → 回登录页并整页重载，带「登录已过期」提示）、`errorText()` 中文错误文案；安装 @fontsource/barlow-semi-condensed。
 - 未开始：Login.vue 重设计、DealerMap 侧栏/顶栏/图例重排、AmapView（统一 darkblue 样式 + zoom<12 隐藏 point 要素 + 自有城市/区县标签、细环标记、比例尺移到左下、首屏 setBounds、弹窗避让）、warmLights 远景加大、CityPicker 细调、TechPanel 去 DataV、首屏并行加载、加载态骨架、logout 整页重载、Codex 评审、部署。
 - 续做顺序：logout/重载 → 首屏并行 + 加载态 + 白闪 → AmapView → 侧栏/顶栏/图例 → 登录页 → 截图矩阵 → tests/marker-click.sh → Codex → 部署。
+
+## Fable 第二轮（docs/fable-rereview-login-map.md）
+已做：P0-1 首屏罩（complete / 首批标记 / 1.2 s 最早者）；P0-2 × 用 pointerdown（捕获）+ 32px，测试加「展开告警 → 点 × → 关闭」；P1-1 顶栏 / 状态行底色、城市名不进界面区；P1-2 底图要素分档（12–14 加建筑，≥14 才有 POI，热力永不显示 POI）；P1-3 标记 / 弹窗随界面放大（--k = max(1, s)）；P1-4 compact 下区县前 5、告警行 46px；P1-5 焦点环（全站 :focus-visible 2px 青色、记住账号、眼睛按钮、告警行可 Tab/Enter）；P1-6 日期 12px；P2：副题去品牌名、记住账号默认勾选。
+未做（P2）：滚轮 0.5 级步进（等老板反馈）、点位↔热力淡入淡出、热力近景最小半径、下拉展开高度过渡。
+验证：真实 Chrome（CDP 9333，@2x）1350×700 / 1920×1080 / 2560×1440 全矩阵 + tests/marker-click.sh 全通过。
+
+## Codex 评审（main..wip-polish）
+全部采纳并修复，无驳回：
+1. 中：无高德 Key / 加载失败时兜底地图容器 opacity 0 一直不可见 → 兜底模式直接显示。
+2. 中：地图挂载前已算好的 fit 丢失 → 挂载后应用当前 fit。
+3. 中：渐进加载只适配第一次出现的区县 → 切城市后 15 秒内区县数增加则重新适配。
+4. 中：城市下拉折叠项键盘不可达 → ↓ 到底自动展开「更多」。
+5. 低：标记圆圈尺寸没乘 --k → 宽高乘 --k。
+Worker 代理 / 鉴权与会话存储未改动，Codex 未发现安全问题。

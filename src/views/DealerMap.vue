@@ -1,7 +1,7 @@
 <template>
   <div class="screen">
     <!-- 地图（主视图，全屏，不缩放） -->
-    <div class="map-layer" :class="{ ready: mapReady }" :style="{ '--dm-scale-bottom': `${34 + 50 * scale}px` }">
+    <div class="map-layer" :class="{ ready: mapReady || amapNotice }" :style="{ '--dm-scale-bottom': `${34 + 50 * scale}px` }">
       <AmapView
         v-if="AMapRef"
         :AMap="AMapRef"
@@ -416,19 +416,24 @@ const locatedCount = computed(() => groups.value.filter((g) => geoResults[g.key]
 // ---------- 初始视野 / 切换城市：适配到主城市所有区县（避开侧栏） ----------
 const sameCity = (district, city) => district && city && String(district).slice(0, 4) === String(city).slice(0, 4)
 let fittedFor = ''
+let fitStart = 0
 function fitCity() {
   // 只用区县中心（个别小区坐标离群会把视野拉得过远）
   const pts = districtMarkers.value.filter((d) => sameCity(d.key, cityCode.value)).map((d) => d.lnglat)
   if (!pts.length) return
-  fittedFor = cityCode.value
+  if (!fittedFor.startsWith(`${cityCode.value}:`)) fitStart = Date.now()
+  fittedFor = `${cityCode.value}:${pts.length}`
   fit.value = { points: pts, n: Date.now() }
 }
+// 渐进加载时主城市的区县会陆续出现：切换城市后 15 秒内区县数增加就重新适配（之后不再打扰用户的视野）
+const cityDistrictCount = computed(() => districtMarkers.value.filter((d) => sameCity(d.key, cityCode.value)).length)
 watch(
-  () => [cityCode.value, districtMarkers.value.length > 0, regionFilter.value],
-  ([code, has], old) => {
-    if (!has) return
+  () => [cityCode.value, cityDistrictCount.value, regionFilter.value],
+  ([code, n], old) => {
+    if (!n) return
     if (old && old[2] !== regionFilter.value) fittedFor = ''
-    if (fittedFor !== code) fitCity()
+    const sameCityFitted = fittedFor.startsWith(`${code}:`)
+    if (!sameCityFitted || (fittedFor !== `${code}:${n}` && Date.now() - fitStart < 15000)) fitCity()
   }
 )
 
