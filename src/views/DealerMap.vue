@@ -94,7 +94,7 @@
         </div>
       </div>
 
-      <TechPanel :title="`一级告警 · 10 天（进行中 ${activeAlarmCount} / 共 ${alarmJoined.length}）`" variant="13" :background-color="PANEL_BG" style="height: 360px">
+      <TechPanel :title="`一级告警 · 10天 · 进行中 ${activeAlarmCount}/${alarmJoined.length}`" variant="13" :background-color="PANEL_BG" style="height: 360px">
         <p v-if="alarmError" class="muted">{{ alarmError }}</p>
         <ul class="list alarms">
           <li v-for="a in alarmFeed" :key="a.id" :class="{ on: a.active, off: !a.located }" :title="a.located ? '定位到小区' : '该小区尚未定位'" @click="focusAlarm(a)">

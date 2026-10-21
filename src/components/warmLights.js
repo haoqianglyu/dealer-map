@@ -31,7 +31,8 @@ function glow(ctx, x, y, radius, [r, g, b], peak) {
 // lights: [{ lnglat, count, pulse }]；pulse = 有进行中告警（外晕 2 秒缓慢呼吸）
 export function createWarmLights(AMap, map) {
   const canvas = document.createElement('canvas')
-  const layer = new AMap.CustomLayer(canvas, { zIndex: 130, zooms: [3, 20], alwaysRender: true })
+  canvas.style.pointerEvents = 'none' // 只是画光，不能挡住标记的点击
+  const layer = new AMap.CustomLayer(canvas, { zIndex: 110, zooms: [3, 20], alwaysRender: true })
   let lights = []
   let palette = PALETTES.gold
   let visible = false
@@ -113,6 +114,7 @@ export function createWarmLights(AMap, map) {
     },
     show(v) {
       visible = v
+      v ? layer.show() : layer.hide() // 点位模式下整层隐藏
       schedule()
     },
     destroy() {
