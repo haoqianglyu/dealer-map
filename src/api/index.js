@@ -1,0 +1,67 @@
+// 只使用平台的只读接口（登录 / 续期 / 查询）。不调用任何新增、修改、删除接口。
+// 数据范围由后端按当前 token 的账号权限过滤——前端不硬编码任何经销商/区域条件。
+import http from './http'
+
+export const login = (mobile, password) =>
+  http.post('/auth/login', { mobile, password }, { skipAuth: true }).then((r) => r.data)
+
+export const me = () => http.get('/me').then((r) => r.data)
+
+export const getDistributor = (id) =>
+  http.get(`/distributor/${id}`).then((r) => r.data?.distributor_entity || null)
+
+// 分页项目查询。平台有两个同构接口：/projects 与 /ctrl/projects，
+// 按 /me 返回的 permission_paths 选择当前账号有权限的那个。
+const PROJECT_ENDPOINTS = ['/projects', '/ctrl/projects']
+
+export function pickProjectEndpoint(permissionPaths = []) {
+  const set = new Set(permissionPaths)
+  return PROJECT_ENDPOINTS.find((p) => set.has(`/v1${p}`)) || null
+}
+
+export function projectPage(endpoint, { page, limit, region }) {
+  return http
+    .post(endpoint, {
+      customer_region: region || '',
+      device_model_id: '',
+      page_options: { page, limit },
+      project_ids: [],
+      special_fields: [],
+      tags: [],
+    })
+    .then((r) => ({
+      list: r.data?.project_entities || r.data?.entities || [],
+      total: Number(r.data?.total) || 0,
+    }))
+}
+
+// 翻页取完当前账号可见的全部项目（region 为空 = 全部；也可传 "省/市" 代码前缀）
+export async function listAllProjects(endpoint, { region = '', limit = 200, concurrency = 3, onProgress } = {}) {
+  const first = await projectPage(endpoint, { page: 1, limit, region })
+  const pages = Math.ceil(first.total / limit)
+  const out = [first.list]
+  let loaded = first.list.length
+  onProgress && onProgress(loaded, first.total)
+  const rest = Array.from({ length: Math.max(0, pages - 1) }, (_, i) => i + 2)
+  const results = {}
+  async function worker() {
+    while (rest.length) {
+      const page = rest.shift()
+      const r = await projectPage(endpoint, { page, limit, region })
+      results[page] = r.list
+      loaded += r.list.length
+      onProgress && onProgress(loaded, first.total)
+    }
+  }
+  await Promise.all(Array.from({ length: concurrency }, worker))
+  for (let p = 2; p <= pages; p++) out.push(results[p] || [])
+  // 按 id 去重（翻页期间若有新项目写入，可能出现重复）
+  const seen = new Set()
+  return out.flat().filter((p) => (seen.has(p.id) ? false : (seen.add(p.id), true)))
+}
+
+// 兜底：账号没有分页接口权限时，用大屏原有的 new-list（一次返回全部，无分页）
+export const listProjectsLegacy = ({ region = '' } = {}) =>
+  http
+    .post('/project/new-list', { region, start_time: 1643644800000, end_time: Date.now() })
+    .then((r) => r.data?.data || [])
