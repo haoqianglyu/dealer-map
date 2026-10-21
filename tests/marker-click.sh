@@ -44,6 +44,8 @@ x=$(xy '.dm-pop__x'); echo "close btn at: $x"; [ -n "$x" ] && [ "$x" != "null" ]
 real "$x"; sleep 0.8
 gone=$(ab eval '[...document.querySelectorAll(".dm-pop")].some(p=>p.offsetParent) ? 0 : 1' | tr -d '"')
 echo "closed by x: $gone"; [ "$gone" = "1" ] || exit 1
+# 弹窗打开时可能平移过地图（避让界面）：重新取红色标记位置
+red=$(ab eval 'JSON.stringify((()=>{for(const m of document.querySelectorAll(".dm-mk--alarm:not(.dm-mk--district)")){const r=m.getBoundingClientRect();const x=r.x+r.width/2,y=r.y+r.height/2;if(m.contains(document.elementFromPoint(x,y)))return [Math.round(x),Math.round(y)]}return null})())' | tr -d '"\\[]')
 real "$red"; sleep 1
 echo PASS-CLOSE
 
