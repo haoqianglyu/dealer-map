@@ -18,6 +18,7 @@
       <div class="col col--left">
         <!-- ProjectSum -->
         <section class="box p-sum">
+          <BoxLoading :show="loading || (st[41] === 'loading' && !live[41])" />
           <div class="sum">
             <div class="sum__top">
               <div class="sum__name">{{ title }}</div>
@@ -62,6 +63,7 @@
 
         <!-- 房间实时情况（RoomReal：每页 5 × 2，左右箭头翻页） -->
         <section class="box p-real">
+          <BoxLoading :show="(st[40] === 'loading' || st[40] === 'idle') && !roomsLive.length" />
           <div class="rr">
             <div class="rr__title">房间实时情况</div>
             <div class="rr__content">
@@ -91,7 +93,7 @@
                     </div>
                   </div>
                 </div>
-                <div v-if="!roomsLive.length" class="rr__empty">{{ st[40] === 'loading' || st[40] === 'idle' ? '加载中...' : '暂无数据' }}</div>
+                <div v-if="!roomsLive.length && st[40] !== 'loading' && st[40] !== 'idle'" class="rr__empty">暂无数据</div>
               </div>
               <button v-if="roomsLive.length > 10" class="rr__nav r" :disabled="rrEnd" aria-label="下一页" @click="rrScroll(1)">›</button>
             </div>
@@ -102,26 +104,28 @@
         <section class="box p-stats">
           <div class="stats">
             <div class="stats__part">
+              <BoxLoading :show="(st[41] === 'loading' || st[41] === 'idle') && !dayRows.length" />
               <div class="part-h"><span class="ttl">24小时房间数据统计</span></div>
               <div class="tabs">
                 <button v-for="k in ['平均温度', '平均露点']" :key="k" :class="{ on: dayMetric === k }" @click="dayMetric = k">{{ k }}</button>
               </div>
               <div class="chart">
                 <EChart v-if="dayRows.length" :option="dayOption" />
-                <div v-else class="empty">{{ st[41] === 'loading' || st[41] === 'idle' ? '加载中...' : '暂无数据' }}</div>
+                <div v-else-if="st[41] !== 'loading' && st[41] !== 'idle'" class="empty">暂无数据</div>
               </div>
             </div>
             <div class="stats__div" />
             <div class="stats__part">
+              <BoxLoading :show="(sensorLoading || cfgLoading) && !daily.length" />
               <div class="part-h">
                 <span class="ttl">室内传感器数据</span>
-                <CityPicker
+                <SmallSelect
                   v-if="sensors.length"
-                  class="pick"
-                  :model-value="String(sensorIdx)"
-                  :options="sensors.map((s, i) => ({ value: String(i), label: s.name }))"
+                  :model-value="sensorIdx"
+                  :options="sensors.map((s, i) => ({ value: i, label: s.name }))"
+                  :width="120"
                   label="传感器"
-                  @update:model-value="(v) => (sensorIdx = Number(v))"
+                  @update:model-value="(v) => (sensorIdx = v)"
                 />
               </div>
               <div class="tabs">
@@ -129,7 +133,7 @@
               </div>
               <div class="chart">
                 <EChart v-if="daily.length" :option="sensorOption" />
-                <div v-else class="empty">{{ sensorLoading ? '加载中...' : '暂无数据' }}</div>
+                <div v-else-if="!sensorLoading && !cfgLoading" class="empty">暂无数据</div>
               </div>
             </div>
           </div>
@@ -149,6 +153,7 @@
 
         <!-- 设备运行系统（Equipments） -->
         <section class="box p-eq">
+          <BoxLoading :show="cfgLoading" />
           <div class="series">
             <div class="part-h"><span class="ttl">设备运行系统</span></div>
             <div class="eq-wrap">
@@ -164,7 +169,7 @@
                     <td>{{ e.category }}</td>
                     <td><button class="link" @click="openDevice(e)">查看数据&gt;</button></td>
                   </tr>
-                  <tr v-if="!equipments.length"><td colspan="5" class="empty">暂无数据</td></tr>
+                  <tr v-if="!equipments.length && !cfgLoading"><td colspan="5" class="empty">暂无数据</td></tr>
                 </tbody>
               </table>
             </div>
@@ -216,7 +221,8 @@
 // 实时数据走设备透传「查询」消息（41/40/44/43/30/15），只在打开本页时查询；页面可见时最多每 60 秒自动刷新一次。
 import { ref, reactive, computed, onMounted, onBeforeUnmount, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import CityPicker from '@/components/CityPicker.vue'
+import SmallSelect from '@/components/SmallSelect.vue'
+import BoxLoading from '@/components/BoxLoading.vue'
 import { useScreenScale } from '@/composables/useScreenScale'
 import BrandLogo from '@/components/BrandLogo.vue'
 import { session } from '@/api/session'
@@ -452,6 +458,7 @@ const sensorIdx = ref(0)
 const metric = ref('d1')
 const sensorRows = ref([])
 const sensorLoading = ref(false)
+const cfgLoading = ref(true) // 项目配置 / 设备类别加载中（设备表、传感器列表依赖它）
 const latest = computed(() => sensorRows.value.reduce((a, b) => (!a || Number(b.timestamp) > Number(a.timestamp) ? b : a), null))
 const daily = computed(() => {
   const m = new Map()
@@ -509,6 +516,7 @@ onMounted(async () => {
   } catch (e) {
     error.value = e?.message || '项目加载失败'
     loading.value = false
+    cfgLoading.value = false
     return
   }
   loading.value = false
@@ -529,6 +537,7 @@ onMounted(async () => {
     listAlarms({ level: '1', days: 10 }),
   ])
   config.value = cfg.status === 'fulfilled' ? cfg.value : null
+  cfgLoading.value = false
   if (cats.status === 'fulfilled') categories.value = Object.fromEntries(cats.value.map((c) => [c.id, c.name]))
   if (models.status === 'fulfilled') modelCat.value = Object.fromEntries(models.value.map((m) => [m.id, m.category_id]))
   if (al.status === 'fulfilled') alarms.value = al.value.filter((a) => a.projectId === projectId).sort((a, b) => b.ts - a.ts)
@@ -661,6 +670,7 @@ onBeforeUnmount(() => {
   flex: 4;
 }
 .box {
+  position: relative;
   min-height: 0;
   background: var(--pd-panel);
   border: 1px solid var(--pd-line);
@@ -1000,6 +1010,7 @@ onBeforeUnmount(() => {
   padding: 15px 20px;
 }
 .stats__part {
+  position: relative;
   flex: 1;
   min-width: 0;
   display: flex;
