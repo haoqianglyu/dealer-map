@@ -138,12 +138,21 @@ function boundsOf(points) {
 }
 // 适配视野（允许小数级缩放；高德 setBounds 会向下取整一级，城市视图显得过远）
 function fitBounds(bounds, pad) {
-  if (typeof map.getFitZoomAndCenterByBounds === 'function') {
-    const [zoom, center] = map.getFitZoomAndCenterByBounds(bounds, pad, 17)
-    map.setZoomAndCenter(zoom, center, true)
-    return
-  }
-  map.setBounds(bounds, false, pad)
+  // 自己算：高德 setBounds / getFitZoomAndCenterByBounds 在大留白时会多缩小一级且不居中
+  const sw = bounds.getSouthWest()
+  const ne = bounds.getNorthEast()
+  const [top, right, bottom, left] = pad
+  const { width, height } = map.getSize()
+  const w = Math.max(80, width - left - right)
+  const h = Math.max(80, height - top - bottom)
+  const lat = (sw.lat + ne.lat) / 2
+  const mPerDegLat = 111320
+  const spanX = Math.max(1, (ne.lng - sw.lng) * mPerDegLat * Math.cos((lat * Math.PI) / 180))
+  const spanY = Math.max(1, (ne.lat - sw.lat) * mPerDegLat)
+  const res = Math.max(spanX / w, spanY / h, 2) // 米/像素
+  const zoom = Math.min(17, Math.max(3, Math.log2((156543.03 * Math.cos((lat * Math.PI) / 180)) / res)))
+  map.setZoomAndCenter(zoom, [(sw.lng + ne.lng) / 2, lat], true)
+  map.panBy((right - left) / -2, (bottom - top) / -2)
 }
 
 // 点击区县：缩放到该区所有小区的范围（至少到小区级别）
@@ -172,7 +181,9 @@ function renderLabels() {
   labels = clear(labels)
   if (level !== 'district') return
   const { AMap } = props
-  labels = props.cityLabels.map(
+  // 城市名只画在附近没有区县气泡的城市（有气泡的城市由区县名说明位置，避免压字）
+  const near = (a, b) => Math.abs(a[0] - b[0]) < 0.2 && Math.abs(a[1] - b[1]) < 0.15
+  labels = props.cityLabels.filter((c) => !props.districts.some((d) => near(d.lnglat, c.lnglat))).map(
     (c) => new AMap.Marker({ position: c.lnglat, anchor: 'center', content: `<div class="dm-city">${esc(c.name)}</div>`, zIndex: 100, bubble: true, clickable: false })
   )
   if (props.mode === 'heat') {
