@@ -102,6 +102,13 @@ export default {
     if (url.pathname === '/geo-shared') return proxyGeo(request, env)
     if (!['GET', 'HEAD'].includes(request.method)) return notFound()
     const res = await env.ASSETS.fetch(request)
+    // /assets/* 缺文件时不能走 SPA 回退返回 index.html（浏览器会把 HTML 当 JS 缓存，页面白屏）
+    if (url.pathname.startsWith('/assets/')) {
+      if ((res.headers.get('content-type') || '').includes('text/html')) {
+        return withHeaders(new Response('Not Found', { status: 404 }), { 'Cache-Control': 'no-store' })
+      }
+      return withHeaders(res, { 'Cache-Control': 'public, max-age=31536000, immutable' }) // 文件名带内容哈希
+    }
     return withHeaders(res)
   },
 }

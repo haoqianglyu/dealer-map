@@ -29,13 +29,15 @@
         <span class="city">{{ regionFilter ? cityName || '—' : '全部城市' }} · 项目分布</span>
       </div>
       <div class="controls">
-        <label v-if="cityOptions.length > 1 || regionFilter">
-          城市
-          <select :value="regionFilter" @change="changeRegion($event.target.value)">
-            <option value="">全部可见范围</option>
-            <option v-for="c in cityOptions" :key="c.region" :value="c.region">{{ c.name }}（{{ c.count }}）</option>
-          </select>
-        </label>
+        <div v-if="cityOptions.length > 1 || regionFilter" class="ctl">
+          <span id="city-label">城市</span>
+          <CityPicker
+            :model-value="regionFilter"
+            :options="[{ value: '', label: '全部可见范围', count: allProjects.length }, ...cityOptions.map((c) => ({ value: c.region, label: c.name, count: c.count }))]"
+            label="城市"
+            @update:model-value="changeRegion"
+          />
+        </div>
         <label v-if="distributorOptions.length > 1">
           经销商
           <select v-model="distributorFilter">
@@ -92,7 +94,7 @@
         </div>
       </div>
 
-      <TechPanel :title="`告警 · 10 天内一级（进行中 ${activeAlarmCount} / 共 ${alarmJoined.length}）`" variant="13" :background-color="PANEL_BG" style="height: 260px">
+      <TechPanel :title="`一级告警 · 10 天（进行中 ${activeAlarmCount} / 共 ${alarmJoined.length}）`" variant="13" :background-color="PANEL_BG" style="height: 360px">
         <p v-if="alarmError" class="muted">{{ alarmError }}</p>
         <ul class="list alarms">
           <li v-for="a in alarmFeed" :key="a.id" :class="{ on: a.active, off: !a.located }" :title="a.located ? '定位到小区' : '该小区尚未定位'" @click="focusAlarm(a)">
@@ -140,46 +142,6 @@
           </div>
         </div>
       </TechPanel>
-
-      <TechPanel title="最新项目" variant="13" :loading="loading" :background-color="PANEL_BG" style="height: 330px">
-        <ul class="list">
-          <li v-for="p in latest" :key="p.id">
-            <span class="date">{{ p.created.slice(0, 10) }}</span>
-            <span class="name">{{ p.community || '未识别小区' }}</span>
-            <span class="meta">{{ p.districtName }} · {{ p.type }} · {{ p.area }}㎡</span>
-          </li>
-          <li v-if="!latest.length" class="empty">暂无项目</li>
-        </ul>
-      </TechPanel>
-
-      <TechPanel :title="`待校正（${needFix.length}）`" variant="13" :background-color="PANEL_BG" style="height: 300px">
-        <p v-if="!AMapRef" class="muted">接入高德 Key 后自动定位到小区；未能匹配的小区会列在这里。</p>
-        <template v-else>
-          <p class="muted">
-            以下小区未能确认位置，不在地图上显示。请在云平台修改项目名称/地址后点「重新定位待校正」。
-            <button class="mini" :disabled="geoPending > 0 || !needFix.length" @click="retryNeedFix">重新定位待校正</button>
-            <button v-if="IS_DEV" class="mini" :disabled="geoPending > 0" @click="downloadSeed">导出已确认坐标</button>
-          </p>
-          <ul class="list fix">
-            <li
-              v-for="g in needFix"
-              :key="g.key"
-              :data-district="g.districtName"
-              :data-community="g.community"
-              :data-query="g.queries[0] || ''"
-              :data-count="g.count"
-              :data-reason="g.reason"
-              :data-returned="g.returned ? [g.returned.name, g.returned.address].filter(Boolean).join(' · ') : ''"
-            >
-              <span class="name">{{ g.community || '名称无法识别小区' }}</span>
-              <span class="meta">{{ g.districtName }} · {{ g.count }} 个 · {{ g.reason }}</span>
-              <span class="meta">项目：{{ g.projects.map((p) => p.name).join('、') }}</span>
-              <span class="meta">高德返回：{{ g.returned ? [g.returned.name, g.returned.address].filter(Boolean).join(' · ') : '未找到' }}</span>
-            </li>
-            <li v-if="!needFix.length" class="empty">全部已定位</li>
-          </ul>
-        </template>
-      </TechPanel>
     </aside>
   </div>
 </template>
@@ -188,6 +150,7 @@
 import { ref, shallowRef, computed, reactive, watch, onMounted, onBeforeUnmount } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import TechPanel from '@/components/TechPanel.vue'
+import CityPicker from '@/components/CityPicker.vue'
 import EChart from '@/components/EChart.vue'
 import AmapView from '@/components/AmapView.vue'
 import FallbackMap from '@/components/FallbackMap.vue'
@@ -197,13 +160,12 @@ import { useTokenRefresh } from '@/composables/useTokenRefresh'
 import { toProject } from '@/geo/model'
 import { loadShared, postShared } from '@/geo/shared'
 import { hasAmapKey, loadAmap } from '@/geo/amap'
-import { loadOverrides, loadSeed, lookupLocal, forgetFailures, exportSeed, seedKey, createGeocodeQueue, jitter } from '@/geo/geocoder'
+import { loadOverrides, loadSeed, lookupLocal, createGeocodeQueue, jitter } from '@/geo/geocoder'
 import { regionInfo } from '@/utils/region'
 import { STATES, applyStates, alarmStates, isActiveAlarm } from '@/geo/states'
 import { fmtNumber, fmtArea } from '@/utils/format'
 import { tooltipStyle, categoryAxis, valueAxis, AXIS_LABEL_COLOR } from '@/utils/chartTheme'
 
-const IS_DEV = import.meta.env.DEV
 const PANEL_BG = 'rgba(3, 12, 30, 0.9)'
 const FETCH_ALL = import.meta.env.VITE_FETCH_ALL === 'true'
 const PAGE_SIZE = Number(import.meta.env.VITE_PAGE_SIZE) || 20
@@ -572,7 +534,6 @@ const statusRows = computed(() => {
   return rows
 })
 
-const latest = computed(() => [...projects.value].sort((a, b) => b.created.localeCompare(a.created)).slice(0, 8))
 
 // ---------- 时钟 ----------
 const clock = ref('')
@@ -671,35 +632,6 @@ async function loadDistributorNames() {
       /* 无权限查看其他经销商时显示编号 */
     }
   }
-}
-
-// 只重查「待校正」里的小区（平台上改了名称之后用）
-function retryNeedFix() {
-  const list = needFix.value.filter((g) => g.queries.length)
-  forgetFailures(list.flatMap((g) => g.queries))
-  for (const g of list) {
-    delete geoResults[g.key]
-    queuedKeys.delete(g.key)
-    retryKeys.add(g.key)
-  }
-  geocodeGroups()
-}
-
-// 开发用：导出已确认坐标为 public/geo-seed.json
-function downloadSeed() {
-  const entries = []
-  for (const g of groups.value) {
-    const r = geoResults[g.key]
-    if (!r || r.source === 'override' || !g.queries.length) continue
-    if (r.lnglat) entries.push([seedKey(g.district, r.query), r.matched ? { p: r.lnglat, n: r.matched } : r.lnglat])
-    else if (r.fail && !r.transient) entries.push([seedKey(g.district, g.queries[0]), { f: r.reason, ret: r.returned || null }])
-  }
-  const blob = new Blob([JSON.stringify(exportSeed(entries), null, 1)], { type: 'application/json' })
-  const a = document.createElement('a')
-  a.href = URL.createObjectURL(blob)
-  a.download = 'geo-seed.json'
-  a.click()
-  URL.revokeObjectURL(a.href)
 }
 
 // ?reverify=1：一次性复核没有高德匹配名称的旧结果（重新查询并上报共享缓存），本轮搜索上限 400 次
@@ -950,6 +882,13 @@ onBeforeUnmount(() => {
     cursor: default;
   }
 }
+.ctl {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: #b7d3f0;
+}
 .geo-bar {
   position: absolute;
   top: 0;
@@ -981,7 +920,7 @@ onBeforeUnmount(() => {
 .legend {
   position: absolute;
   left: 24px;
-  bottom: 22px;
+  bottom: 34px; /* 让出底部高德 logo / 版权；比例尺放在图例上方 */
   display: flex;
   gap: 18px;
   padding: 8px 14px;

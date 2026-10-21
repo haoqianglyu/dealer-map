@@ -58,8 +58,8 @@ export function createWarmLights(AMap, map) {
     ctx.fillRect(0, 0, w, h)
     if (!lights.length) return
     const res = map.getResolution() // 米/像素（视野中心）
-    // 远景（zoom < 12）按 2^((zoom−12)·0.6) 缩小最小像素，城市级视图里各小区灯光才分得开
-    const zoomScale = Math.min(1, Math.pow(2, (map.getZoom() - 12) * 0.6))
+    // 远景（zoom < 12）按 2^((zoom−12)·0.4) 缩小最小像素，城市级视图里各小区灯光才分得开
+    const zoomScale = Math.min(2, Math.pow(2, (map.getZoom() - 12) * 0.4)) // 近景放大（最多 2 倍），远景缩小
     // 密集处降低外晕 α：按 24px 网格统计邻近灯数
     const cell = 24
     const pts = lights.map((l) => ({ l, px: map.lngLatToContainer(l.lnglat) }))
@@ -84,7 +84,7 @@ export function createWarmLights(AMap, map) {
     for (const { l, px } of pts.sort((a, b) => a.l.count - b.l.count)) {
       const t = tierOf(l.count)
       if (!t) continue
-      const R = Math.max(t.r / res, Math.max(5, t.minPx * zoomScale))
+      const R = Math.max(t.r / res, Math.max(8, t.minPx * zoomScale))
       const crowd = Math.max(0.45, 1 / (1 + 0.12 * (density(px) - 1)))
       if (px.x < -R || px.y < -R || px.x > w + R || px.y > h + R) continue
       // 外晕：宽、很柔、低饱和；芯：小；灯丝：极小的近白亮点（各档几乎同大）

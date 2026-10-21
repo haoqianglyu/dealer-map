@@ -150,6 +150,7 @@ function renderHeat() {
   const style = on ? STYLE_HEAT : STYLE_MARKERS
   if (style !== styleNow) {
     map.setMapStyle(style)
+    // 注：曾试过热力模式隐藏 'point'，但城市/区县名也属于 point 层会一起消失，故保留全部要素
     styleNow = style
   }
   const lights = props.communities
@@ -188,7 +189,7 @@ onMounted(() => {
     center: props.center || undefined,
     mapStyle: 'amap://styles/darkblue',
   })
-  map.addControl(new AMap.Scale({ position: 'LB' }))
+  map.addControl(new AMap.Scale({ position: { left: '24px', bottom: '78px' } })) // 放在左下图例上方，避开图例与高德 logo
   if (props.center) centerOn(props.center)
   info = new AMap.InfoWindow({ isCustom: true, offset: new AMap.Pixel(0, -20), anchor: 'bottom-center' })
   heat = createWarmLights(AMap, map)
