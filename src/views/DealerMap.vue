@@ -176,7 +176,7 @@
           </div>
         </TechPanel>
 
-        <TechPanel class="p-trend" :title="timeMode === 'year' ? '按年份新增' : '按月份新增'" :loading="loading && !allProjects.length">
+        <TechPanel v-if="!compact" class="p-trend" :title="timeMode === 'year' ? '按年份新增' : '按月份新增'" :loading="loading && !allProjects.length">
           <template #extra>
             <div class="seg seg--mini">
               <button :class="{ on: timeMode === 'year' }" @click="timeMode = 'year'">年</button>
@@ -219,6 +219,14 @@ import { tooltipStyle, categoryAxis, valueAxis } from '@/utils/chartTheme'
 defineOptions({ name: 'DealerMap' })
 // 屏幕适配：地图本身铺满视口、不缩放；叠加界面放在一个透明层里，与详情页用同一个比例缩放
 const { style: uiStyle, scale } = useScreenScale()
+// 逻辑画布矮（如 1350×700 笔记本）时收起「新增趋势」，把高度让给一级告警
+const compact = ref(false)
+const measure = () => (compact.value = window.innerHeight / scale.value < 940)
+onMounted(() => {
+  measure()
+  window.addEventListener('resize', measure)
+})
+onBeforeUnmount(() => window.removeEventListener('resize', measure))
 const FETCH_ALL = import.meta.env.VITE_FETCH_ALL === 'true'
 const PAGE_SIZE = Number(import.meta.env.VITE_PAGE_SIZE) || 20
 const SIDE_W = 380 // 侧栏宽（设计稿像素）

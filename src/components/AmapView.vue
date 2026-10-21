@@ -136,6 +136,16 @@ function boundsOf(points) {
   const lats = points.map((p) => p[1])
   return new props.AMap.Bounds([Math.min(...lngs), Math.min(...lats)], [Math.max(...lngs), Math.max(...lats)])
 }
+// 适配视野（允许小数级缩放；高德 setBounds 会向下取整一级，城市视图显得过远）
+function fitBounds(bounds, pad) {
+  if (typeof map.getFitZoomAndCenterByBounds === 'function') {
+    const [zoom, center] = map.getFitZoomAndCenterByBounds(bounds, pad, 17)
+    map.setZoomAndCenter(zoom, center, true)
+    return
+  }
+  map.setBounds(bounds, false, pad)
+}
+
 // 点击区县：缩放到该区所有小区的范围（至少到小区级别）
 function zoomTo(points) {
   if (!points?.length) return
@@ -143,7 +153,7 @@ function zoomTo(points) {
     map.setZoomAndCenter(15, points[0], false, 600)
     return
   }
-  map.setBounds(boundsOf(points), false, padding(60))
+  fitBounds(boundsOf(points), padding(60))
   if (map.getZoom() < ZOOM_SPLIT) map.setZoom(ZOOM_SPLIT)
 }
 // 视野中心向左让出侧栏
@@ -324,7 +334,7 @@ watch(
   (f) => {
     if (!f || !map || !f.points?.length) return
     info.close()
-    map.setBounds(boundsOf(f.points), false, padding(40))
+    fitBounds(boundsOf(f.points), padding(40))
   }
 )
 
