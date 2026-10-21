@@ -136,28 +136,9 @@
       </div>
 
       <div class="col col--right">
-        <!-- 电表数据（MeterData） -->
+        <!-- 电表数据（按业主要求暂时留空框，不查询 44） -->
         <section class="box p-meter">
-          <div class="series">
-            <div class="part-h">
-              <span class="ttl">电表数据</span>
-              <CityPicker
-                v-if="series[44].list.length"
-                class="pick"
-                :model-value="String(series[44].idx)"
-                :options="series[44].list.map((d, i) => ({ value: String(i), label: d.deviceName || d.deviceId }))"
-                label="电表"
-                @update:model-value="(v) => (series[44].idx = Number(v))"
-              />
-            </div>
-            <div v-if="series[44].list.length" class="tabs">
-              <button v-for="k in RANGES" :key="k.key" :class="{ on: series[44].range === k.key }" @click="series[44].range = k.key">{{ k.label }}</button>
-            </div>
-            <div class="chart">
-              <EChart v-if="series[44].list.length" :option="seriesOption(44)" />
-              <div v-else class="empty">{{ st[44] === 'loading' || st[44] === 'idle' ? '加载中...' : '暂无数据' }}</div>
-            </div>
-          </div>
+          <div class="series"><div class="part-h"><span class="ttl">电表数据</span></div></div>
         </section>
 
         <!-- 建筑能效（按业主要求留空框） -->
@@ -335,7 +316,7 @@ async function refreshLive(manual = true) {
   const [r41, r40, r44, r43, r30] = await Promise.all([
     runQuery(41),
     runQuery(40),
-    skip(44) ? null : runQuery(44),
+    null, // 电表数据：按业主要求暂不查询 44（Worker 仍放行，留待以后）
     null, // 建筑能效：按业主要求留空，不查询 43
     runQuery(30, { query: { projectId } }),
   ])
