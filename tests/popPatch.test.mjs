@@ -14,3 +14,9 @@ test('焦点身份：按 data-act / data-pid / data-g + class', () => {
   assert.notEqual(focusKey(n({ 'data-pid': '7' }, 'go')), focusKey(n({ 'data-pid': '8' }, 'go')))
   assert.equal(focusKey(null), '')
 })
+
+test('焦点身份不含随状态变化的 class（告警恢复后摘要行去掉 on 仍是同一个按钮）', () => {
+  const n = (attrs, className) => ({ className, getAttribute: (a) => attrs[a] ?? null })
+  assert.equal(focusKey(n({ 'data-act': 'al', 'data-pid': '7' }, 'al al--sum on')), focusKey(n({ 'data-act': 'al', 'data-pid': '7' }, 'al al--sum')))
+  assert.notEqual(focusKey(n({ 'data-pid': '7' }, 'go')), focusKey(n({ 'data-act': 'al', 'data-pid': '7' }, 'al')))
+})

@@ -683,6 +683,9 @@ function refreshPopover() {
   updatePopover()
 }
 function updatePopover() {
+  // 位置先跟上（成员 / 坐标变了，内容可能没变）
+  const at = info.getPosition && info.getPosition()
+  if (at && (at.lng !== pop.c.lnglat[0] || at.lat !== pop.c.lnglat[1])) info.setPosition(pop.c.lnglat)
   const html = popoverHtml()
   if (html === pop.html) return // 内容没变：DOM 一点不动
   const root = el.value?.querySelector('.dm-pop')
@@ -698,8 +701,6 @@ function updatePopover() {
     clearPopMq(old)
     old.replaceWith(node)
     mountPopMq(node)
-    // 焦点在被替换的节点里：在新节点里找回同一个按钮（遥控 / 键盘不丢焦点）
-    if (fk && old.contains(active)) [node, ...node.querySelectorAll('[tabindex],a,button')].find((n) => focusKey(n) === fk)?.focus({ preventScroll: true })
     return node
   }
   if (prev.head !== next.head) {
@@ -730,8 +731,8 @@ function updatePopover() {
     else if (o) o.remove()
     else if (n) ul.after(n.cloneNode(true))
   }
-  const at = info.getPosition && info.getPosition()
-  if (at && (at.lng !== pop.c.lnglat[0] || at.lat !== pop.c.lnglat[1])) info.setPosition(pop.c.lnglat)
+  // 焦点所在的行被换掉（重排 / 插入告警行时它可能挪到别的行）：在整个弹窗里找回同一个按钮（遥控 / 键盘不丢焦点）
+  if (fk && !root.contains(document.activeElement)) [...root.querySelectorAll('[tabindex],a,button')].find((n) => focusKey(n) === fk)?.focus({ preventScroll: true })
 }
 
 // 上一帧的视图（决定动画方向）：{ level, zq, items }
