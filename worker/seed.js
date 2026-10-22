@@ -17,7 +17,7 @@ export function createSeedHandler({ seed, overrides, apiOrigin, fetchFn = (...a)
     const id = await tokenId(authz)
     const exp = authOk.get(id)
     if (exp && exp > now()) return true
-    const r = await fetchFn(`${apiOrigin}/me`, { headers: { authorization: authz }, redirect: 'manual', cf: { cacheTtl: 0, cacheEverything: false } })
+    const r = await fetchFn(`${apiOrigin}/me`, { headers: { authorization: authz }, redirect: 'manual', signal: AbortSignal.timeout(8000), cf: { cacheTtl: 0, cacheEverything: false } })
     if (r.status !== 200) return false
     if (authOk.size > 5000) authOk.clear()
     authOk.set(id, now() + AUTH_TTL)

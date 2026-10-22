@@ -6,11 +6,11 @@ const URL = '/geo-shared'
 const auth = () => (session.token() ? { authorization: `Bearer ${session.token()}` } : {})
 
 // 离线坐标种子 { seed, overrides }（worker/data/*.json）：登录后经 Worker GET /geo-shared/seed 凭 token 下发（不再是公开静态文件）。
-// 失败（未登录 / 401 / 断网）→ 两者都按空处理，不阻塞地图；失败不缓存，下次调用重试。成功后整页生命周期内复用。
+// 失败（未登录 / 401 / 断网 / 10 s 超时）→ 两者都按空处理，不阻塞地图；失败不缓存，下次调用重试。成功后整页生命周期内复用。
 let bundleP = null
 export function loadSeedBundle() {
   if (!bundleP) {
-    bundleP = fetch(`${URL}/seed`, { headers: auth() }) // 响应 private, max-age=3600（Vary: Authorization）
+    bundleP = fetch(`${URL}/seed`, { headers: auth(), signal: AbortSignal.timeout?.(10000) }) // 响应 private, max-age=3600（Vary: Authorization）
       .then((r) => {
         if (!r.ok) throw new Error(`seed ${r.status}`)
         return r.json()
