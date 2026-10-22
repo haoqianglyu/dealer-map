@@ -307,6 +307,26 @@ function renderLabels() {
   map.add(labels)
 }
 
+// 标记点击：不用高德 Marker 的 'click' 事件，改用标记 DOM 上的原生 click。
+// 根因（区县气泡「点了没反应」）：高德在按下→抬起之间指针移动 ≥ ~3px 时把这次操作当成拖动地图（地图也跟着挪了几像素），
+// 不再派发 Marker 'click'。真人用鼠标 / 触控板 / 手指 / 电视遥控点击几乎都会抖动几个像素，于是放大不触发；
+// 自动化测试的合成点击按下抬起坐标完全相同，所以一直测不出来。浏览器原生 click 只要按下抬起在同一元素上就会触发
+// （触屏轻点在触摸容差内也会合成 click），这里再用按下点到抬起点的距离区分「点」和「拖」（> TAP_SLOP 视为拖动地图，不触发）。
+// 聚合（cluster）分支重写标记时请保留这一做法。
+const TAP_SLOP = 12 // px（屏幕像素）
+let downAt = null // 最近一次 pointerdown 的屏幕坐标（onPopDown 捕获阶段记录）
+function tappable(html, onTap) {
+  const box = document.createElement('div')
+  box.innerHTML = html.trim()
+  const node = box.firstElementChild
+  node.addEventListener('click', (e) => {
+    if (downAt && Math.hypot(e.clientX - downAt[0], e.clientY - downAt[1]) > TAP_SLOP * k()) return
+    e.stopPropagation()
+    onTap()
+  })
+  return node
+}
+
 function renderMarkers() {
   if (!map) return
   markers = clear(markers)
@@ -317,10 +337,9 @@ function renderMarkers() {
       const m = new AMap.Marker({
         position: d.lnglat,
         anchor: 'center',
-        content: markerHtml({ count: d.projects.length, projects: d.projects, district: true, label: d.label }),
+        content: tappable(markerHtml({ count: d.projects.length, projects: d.projects, district: true, label: d.label }), () => zoomTo(d.points, d.lnglat)),
         zIndex: 120 + stateRank(worstState(d.projects)),
       })
-      m.on('click', () => zoomTo(d.points, d.lnglat))
       return m
     })
   } else {
@@ -328,10 +347,9 @@ function renderMarkers() {
       const m = new AMap.Marker({
         position: c.lnglat,
         anchor: 'center',
-        content: markerHtml({ count: c.projects.length, projects: c.projects, label: c.label, named: level === 'named' }),
+        content: tappable(markerHtml({ count: c.projects.length, projects: c.projects, label: c.label, named: level === 'named' }), () => openPopover(c)),
         zIndex: 120 + stateRank(worstState(c.projects)),
       })
-      m.on('click', () => openPopover(c))
       return m
     })
   }
@@ -385,6 +403,7 @@ function onZoom() {
 
 // × 用 pointerdown 直接关闭（捕获阶段，高德 InfoWindow 内部吞掉 click 时也可靠）
 function onPopDown(e) {
+  downAt = [e.clientX, e.clientY]
   if (!inPop(e.target)) {
     // 用户开始拖动 / 点地图：停掉进行中的快速平移，不与手势抢视野
     cancelAnimationFrame(panRaf)
