@@ -12,6 +12,7 @@ import { STATES, stateRank, worstState, alarmCount, hasNewAlarm, levelState, isA
 import { buildIndexes, query, membersOf, expansionZoom, layoutLabels, circleSize, circleFont, zoomClusterFor, levelFor as levelAt, byPriority, ZOOM_TERMINAL, textWidth, mainMass, leafIndex, anyLeafKey, queryZoom, DOT_SIZE, pickRefreshTarget } from '@/geo/cluster'
 import { fmtNumber } from '@/utils/format'
 import { allOffline, offlineCount } from '@/geo/online'
+import { rowPatch, focusKey } from '@/geo/popPatch'
 
 // 高德地图：自定义 HTML 标记 + 暖光热力。标记四个层级（docs/fable-clustering.md）：
 //   ① 区县（z < zoomCluster()，≈ 城市视野再放大一级）：每区一个汇总圈，数 = 该区全部项目（含未定位）；
@@ -267,20 +268,41 @@ function popoverHtml() {
   </div>`
 }
 
-let popMq = [] // 弹窗内跑马灯的清理函数（每次重绘 / 关闭时清掉）
-function clearPopMq() {
-  popMq.forEach((f) => f())
-  popMq = []
+let popMq = new Map() // 弹窗内跑马灯：节点 → 清理函数（整体重绘 / 关闭时全清；增量更新只清被替换的行）
+function clearPopMq(scope = null) {
+  for (const [n, f] of popMq) {
+    if (scope && !scope.contains(n)) continue
+    f()
+    popMq.delete(n)
+  }
+}
+function mountPopMq(scope) {
+  scope?.querySelectorAll('.mqx').forEach((n) => popMq.set(n, mountMarquee(n)))
+}
+// 弹窗 HTML → 归一化的分段（头部 / 各行 / 底部按钮），供增量比较
+function popParts(html) {
+  const box = document.createElement('div')
+  box.innerHTML = html.trim()
+  const root = box.firstElementChild
+  return {
+    root,
+    head: root.querySelector('.dm-pop__h').outerHTML,
+    rows: [...root.querySelector('ul').children].map((n) => n.outerHTML),
+    foot: root.querySelector('.dm-pop__all')?.outerHTML || '',
+  }
 }
 function openPopover(c, keep = false) {
   if (!keep || !pop || pop.c.key !== c.key) pop = { c, all: false, toggled: new Set(), more: new Set(), gopen: new Set(c.focusKey ? [c.focusKey] : []) }
   clearPopMq()
-  info.setContent(popoverHtml())
+  const html = popoverHtml()
+  pop.html = html
+  pop.parts = popParts(html)
+  info.setContent(html)
   info.open(map, c.lnglat)
   nextTick(() =>
     requestAnimationFrame(() => {
       avoidUi() // 展开告警 / 更多后弹窗变高，再检查一次是否被界面挡住
-      el.value?.querySelectorAll('.dm-pop .mqx').forEach((n) => popMq.push(mountMarquee(n)))
+      mountPopMq(el.value?.querySelector('.dm-pop'))
     })
   )
 }
@@ -647,7 +669,8 @@ function refreshPopover() {
   if (!pop) return
   let c
   if (pop.c.groups) {
-    if (level !== 'terminal') return // 只在终态级（缩小后的簇不是同一个分组）
+    // 分组弹窗出现在终态级，以及 14–15 级同坐标的簇（展开级别 > 16）；更远的级别簇不是同一个分组
+    if (level !== 'terminal' && level !== 'named') return
     const t = pickRefreshTarget(indexes, lastItems, pop.c.memberKeys.split('\n'), pop.c.focusKey)
     if (!t) return
     // 聚焦的小区被拆出来成了单小区时也用（一组的）分组弹窗：保留 groups / focusKey，之后再重建还能跟着它并进新簇
@@ -660,17 +683,55 @@ function refreshPopover() {
   updatePopover()
 }
 function updatePopover() {
-  const ul = el.value?.querySelector('.dm-pop ul')
-  const top = ul ? ul.scrollTop : 0
-  clearPopMq()
-  info.setContent(popoverHtml())
+  const html = popoverHtml()
+  if (html === pop.html) return // 内容没变：DOM 一点不动
+  const root = el.value?.querySelector('.dm-pop')
+  const next = popParts(html)
+  const prev = pop.parts
+  pop.html = html
+  pop.parts = next
+  if (!root || !prev) return info.setContent(html)
+  const active = document.activeElement
+  const fk = root.contains(active) ? focusKey(active) : ''
+  const swap = (old, fresh) => {
+    const node = fresh.cloneNode(true)
+    clearPopMq(old)
+    old.replaceWith(node)
+    mountPopMq(node)
+    // 焦点在被替换的节点里：在新节点里找回同一个按钮（遥控 / 键盘不丢焦点）
+    if (fk && old.contains(active)) [node, ...node.querySelectorAll('[tabindex],a,button')].find((n) => focusKey(n) === fk)?.focus({ preventScroll: true })
+    return node
+  }
+  if (prev.head !== next.head) {
+    const h = root.querySelector('.dm-pop__h')
+    for (const sel of ['b', 'span']) {
+      const o = h.querySelector(`:scope > ${sel}`)
+      const n = next.root.querySelector(`.dm-pop__h > ${sel}`)
+      if (o && n && o.innerHTML !== n.innerHTML) o.innerHTML = n.innerHTML
+    }
+  }
+  const ul = root.querySelector('ul')
+  const fresh = [...next.root.querySelector('ul').children]
+  for (const { op, i } of rowPatch(prev.rows, next.rows)) {
+    if (op === 'replace') swap(ul.children[i], fresh[i])
+    else if (op === 'append') {
+      const node = fresh[i].cloneNode(true)
+      ul.appendChild(node)
+      mountPopMq(node)
+    } else {
+      clearPopMq(ul.children[i])
+      ul.children[i].remove()
+    }
+  }
+  if (prev.foot !== next.foot) {
+    const o = root.querySelector('.dm-pop__all')
+    const n = next.root.querySelector('.dm-pop__all')
+    if (o && n) swap(o, n)
+    else if (o) o.remove()
+    else if (n) ul.after(n.cloneNode(true))
+  }
   const at = info.getPosition && info.getPosition()
   if (at && (at.lng !== pop.c.lnglat[0] || at.lat !== pop.c.lnglat[1])) info.setPosition(pop.c.lnglat)
-  nextTick(() => {
-    const u = el.value?.querySelector('.dm-pop ul')
-    if (u) u.scrollTop = top
-    el.value?.querySelectorAll('.dm-pop .mqx').forEach((n) => popMq.push(mountMarquee(n)))
-  })
 }
 
 // 上一帧的视图（决定动画方向）：{ level, zq, items }

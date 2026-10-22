@@ -92,3 +92,16 @@ test('小区汇总：全部离线 / 混合 / 全部在线', () => {
   assert.deepEqual(onlineSummary(groups[1].projects, set), { online: 1, offline: 1, total: 2, allOffline: false, mixed: true })
   assert.deepEqual(groupsOnlineStats(groups, { cur: set }), { online: 3, total: 6, groups: { allOffline: 1, mixed: 1, allOnline: 1 } })
 })
+
+test('过期在读取时判断，且正好 5 分钟即未知（轮询卡住也会过期）', () => {
+  let t = 0
+  const tr = createOnlineTracker({ now: () => t })
+  tr.update(toOnlineSet({ ids: ['a'] }))
+  t = STALE_MS - 1
+  assert.ok(tr.current())
+  t = STALE_MS
+  assert.equal(tr.current(), null) // 没有新请求返回也过期
+  tr.update(toOnlineSet({ ids: ['a'] }))
+  t += STALE_MS
+  assert.equal(tr.update(null), null) // 失败时 = 5 分钟整也不再沿用
+})

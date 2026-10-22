@@ -32,7 +32,7 @@ export function createOnlineTracker({ now = () => Date.now() } = {}) {
         cur = set
         okAt = t
         view = { cur, prev, stale: false, updatedAt: t }
-      } else if (cur && t - okAt <= STALE_MS) {
+      } else if (cur && t - okAt < STALE_MS) {
         view = { cur, prev, stale: true, updatedAt: okAt }
       } else {
         cur = prev = null
@@ -40,7 +40,12 @@ export function createOnlineTracker({ now = () => Date.now() } = {}) {
       }
       return view
     },
-    get view() {
+    // 读取时也检查过期：轮询卡住 / 一直失败时，5 分钟一到就变未知（DealerMap 用定时器调用）
+    current() {
+      if (view && now() - okAt >= STALE_MS) {
+        cur = prev = null
+        view = null
+      }
       return view
     },
   }

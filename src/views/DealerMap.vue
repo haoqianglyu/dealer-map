@@ -299,6 +299,11 @@ async function loadOnline() {
   onlineRaw.value = onlineTracker.update(set)
   onlineLoaded.value = true
 }
+// 过期不只在请求返回时判断：每 15 秒按读取时刻检查一次（轮询卡住时 5 分钟后也会变未知）
+const onlineExpiry = setInterval(() => {
+  const v = onlineTracker.current()
+  if (v !== onlineRaw.value) onlineRaw.value = v
+}, 15000)
 // 与本账号项目一个都对不上 → 当未知
 const onlineView = computed(() => sane(onlineRaw.value, allProjects.value))
 function refreshStatus() {
@@ -876,6 +881,7 @@ onMounted(async () => {
 
 onBeforeUnmount(() => {
   clearInterval(clockTimer)
+  clearInterval(onlineExpiry)
   clearInterval(alarmTimer)
   queue && queue.stop()
 })
