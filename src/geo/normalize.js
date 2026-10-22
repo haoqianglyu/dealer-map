@@ -2,21 +2,25 @@
 // 只用小区名做地理编码，不把门牌、楼栋、房号发给地图服务，也不在页面展示。
 
 const CN_NUM = '一二三四五六七八九十百零〇两壹贰叁肆伍陆柒捌玖拾'
-// 第一个出现的「楼栋/单元/房号」标记处截断：阿拉伯数字，或中文数字 + 栋/幢/号楼/单元/室/层/楼
+// 第一个出现的「楼栋/单元/房号」标记处截断：阿拉伯数字，或中文数字 + 栋/幢/座/号楼/单元/室/层/楼
 // （中文数字 + 号 不截断，避免误伤「运河一号府」「公园壹号」这类小区名）
-const CUT_RE = new RegExp(`(\\d|[A-Za-z]\\d|[${CN_NUM}]+(?:栋|幢|号楼|单元|室|层|楼))`)
+const CUT_RE = new RegExp(`(\\d|[A-Za-z]\\d|[${CN_NUM}]+(?:栋|幢|座|号楼|单元|室|层|楼))`)
 // 「别墅」不在此列：海源别墅、金臣别墅 这类「别墅」是小区名的一部分（只去掉「自建别墅/自建房」）
 const TAIL_RE = /(地下室|办公室|样板间|样板房|展厅|自建别墅|自建房|自建|测试|项目|住宅|[A-Za-z#＃\-－—_~]+)+$/
 // 截断后残留在末尾的楼栋标记只在前面是字母/#时才是户号（「A栋」「B座」「#号」）；
 // 「蠡湖一号99」「花园弄99」里号/弄在户号数字之前，是小区/弄堂名的一部分，不能剥
-const UNIT_TAIL_RE = /[A-Za-z#＃]+[号栋幢座]$/
-// 只剩分期/分区（「B区」「东二区」「三期」）不是小区名
-const PHASE_ONLY_RE = new RegExp(`^[东西南北中]?(?:[A-Za-z]|[${CN_NUM}]+)?[区期]$`)
+const UNIT_TAIL_RE = /[A-Za-z#＃]+(?:号楼|[号栋幢座])$/
+// 只剩分期/分区（「B区」「东二区」「三期」「第三期」「B区三期」）不是小区名
+const PHASE_ONLY_RE = new RegExp(`^(?:第?[东西南北中]?(?:[A-Za-z]|[${CN_NUM}]+)?[区期])+$`)
+// 多行地址里只有省市区县的行（「无锡市滨湖区」）跳过，取下一行的小区名；分期/分区（「华府庄园八区」）不算
+const ADMIN_LINE_RE = /^(?:[\u4e00-\u9fa5]{1,6}?(?:省|自治区|市))*(?:[\u4e00-\u9fa5]{1,6}?(?:市|县|区))?$/
+const PHASE_END_RE = new RegExp(`(?:[A-Za-z东西南北中]|[${CN_NUM}])区$`)
 // 项目名里常混入的系统/产品/用途词（不是小区名的一部分）
 const PRODUCT_RE = /三管制|三管式|空气系统|新风系统|新风|三恒|四恒|五恒|两联供|地暖|测试|实验室|样板间|样板房|展厅|展示屏|会议室|办公室/g
 // 去掉上述词后若只剩这些泛称，视为无法识别小区
-const GENERIC = new Set(['仓库', '公司', '工厂', '车间', '门店', '机房', '设备间', '地下室', '长期'])
-const NOISE_RE = /[（(][^）)]*[）)]|[\s.。·•、,，:：;；'"“”‘’/\\|]+/g
+const GENERIC = new Set(['仓库', '公司', '工厂', '车间', '门店', '机房', '设备间', '地下室', '长期', '别墅'])
+const PAREN_RE = /[（(][^）)]*[）)]/g
+const NOISE_RE = /[\s.。·•、,，:：;；'"“”‘’/\\|]+/g
 
 // 分期/分区是不同小区，必须保留：先把「3期」「2区」转成中文数字，避免被下面的「数字处截断」切掉
 const CN_D = '零一二三四五六七八九'
@@ -29,19 +33,27 @@ const cnNum = (d) => {
 
 // 多行地址（同一字段里重复写了几遍、或第二行是路名）逐行归一化，取第一行能识别出小区的，
 // 避免把几行拼成「宝格丽宝格丽」「生普生普群星路」
+// （括号里的备注可能跨行，先整体去掉再分行）
 export function communityName(raw) {
-  for (const line of String(raw || '').split(/[\r\n]+/)) {
+  const lines = String(raw || '').replace(PAREN_RE, '').split(/[\r\n]+/)
+  let adminOnly = ''
+  for (const line of lines) {
     const c = lineCommunity(line)
-    if (c) return c
+    if (!c) continue
+    if (lines.length > 1 && ADMIN_LINE_RE.test(c) && !PHASE_END_RE.test(c)) {
+      adminOnly ||= c
+      continue
+    }
+    return c
   }
-  return ''
+  return adminOnly
 }
 
 // 规则版本：归一化结果变化会改变缓存 key（区县adcode|市+区+小区），改规则时递增，便于核对种子/共享缓存是否已按新规则重查
 export const NORMALIZE_VERSION = 2
 
 function lineCommunity(raw) {
-  let s = String(raw || '').replace(NOISE_RE, '').replace(PRODUCT_RE, '')
+  let s = String(raw || '').replace(PAREN_RE, '').replace(NOISE_RE, '').replace(PRODUCT_RE, '')
   s = s.replace(/(\d{1,2})(期|区)/g, (_, d, t) => cnNum(d) + t)
   // 分区字母统一大写：「金科蠡湖b区」与「金科蠡湖B区」是同一个小区
   s = s.replace(/[a-z](?=[区期])/g, (c) => c.toUpperCase())
