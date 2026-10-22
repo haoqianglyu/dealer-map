@@ -92,5 +92,42 @@ export function switchTheme(t, src) {
       )
     )
     .catch(() => {})
-  vt.finished.catch(() => {}).finally(() => current === vt && html.classList.remove('theme-vt'))
+  vt.finished
+    .catch(() => {})
+    .finally(() => {
+      if (current !== vt) return
+      current = null
+      html.classList.remove('theme-vt')
+    })
+}
+
+// 过渡期间（含等瓦片的那段）Chrome 把整页当成截图，命中测试一律落在 <html> 上，点击到不了真实元素
+//（::view-transition { pointer-events: none } 也不管用）。所以：过渡中在 <html> 上按下 → 立即结束动画（直接显示新主题），
+// 这一下的 click 本会落在 <html>（按下与抬起目标的公共祖先）→ 转发给坐标下的真实元素（按下 / 抬起 / click 全套，
+// 标记的「点 / 拖」判定与弹窗按钮都靠这些事件）。
+const SLOP = 12
+let redirect = null
+function onOverlayDown(e) {
+  if (!current || e.target !== document.documentElement) return
+  current.skipTransition()
+  redirect = { x: e.clientX, y: e.clientY }
+}
+function onOverlayClick(e) {
+  const r = redirect
+  redirect = null
+  if (!r || e.target !== document.documentElement || Math.hypot(e.clientX - r.x, e.clientY - r.y) > SLOP) return
+  const t = document.elementFromPoint(e.clientX, e.clientY)
+  if (!t || t === document.documentElement) return
+  e.stopPropagation()
+  const init = { bubbles: true, cancelable: true, composed: true, view: window, clientX: e.clientX, clientY: e.clientY, screenX: e.screenX, screenY: e.screenY, button: 0 }
+  const ptr = { ...init, pointerId: 1, pointerType: e.pointerType || 'mouse', isPrimary: true }
+  t.dispatchEvent(new PointerEvent('pointerdown', { ...ptr, buttons: 1 }))
+  t.dispatchEvent(new MouseEvent('mousedown', { ...init, buttons: 1 }))
+  t.dispatchEvent(new PointerEvent('pointerup', ptr))
+  t.dispatchEvent(new MouseEvent('mouseup', init))
+  t.dispatchEvent(new MouseEvent('click', init))
+}
+if (typeof window !== 'undefined') {
+  window.addEventListener('pointerdown', onOverlayDown, true)
+  window.addEventListener('click', onOverlayClick, true)
 }
