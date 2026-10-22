@@ -55,3 +55,13 @@ export function applyStates(projects, stateById = null) {
     return s ? { ...p, ...s } : p
   })
 }
+
+// 弹窗行排序：告警 → 预警 → 在线正常（含在线状态未知）→ 离线（离线垫底）；告警 / 预警永远赢过离线。
+// 同档内：告警条数多的在前 → 新建的在前
+export const hasActive = (p) => (p.alarms || []).some(isActiveAlarm)
+export const isOffRow = (p) => p.state !== 'alarm' && p.state !== 'warning' && p.online === false
+const projRank = (p) => (p.state === 'alarm' || p.state === 'warning' ? stateRank(p.state) : isOffRow(p) ? -1 : 0)
+export const byProjectPriority = (a, b) =>
+  projRank(b) - projRank(a) || (b.alarms?.length || 0) - (a.alarms?.length || 0) || String(b.created).localeCompare(String(a.created))
+// 分组弹窗组内：有进行中告警的项目在前，其余同上
+export const byActiveFirst = (a, b) => hasActive(b) - hasActive(a) || byProjectPriority(a, b)

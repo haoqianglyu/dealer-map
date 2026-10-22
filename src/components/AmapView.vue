@@ -8,7 +8,7 @@ import { createWarmLights } from './warmLights'
 import { showName } from '@/utils/showroom'
 import { mountMarquee, alarmText } from '@/directives/marquee'
 import CONTEXT_CITIES from '@/data/cities-context.json'
-import { STATES, stateRank, worstState, alarmCount, hasNewAlarm, levelState, isActiveAlarm, alarmTag, NOTICE_COLOR } from '@/geo/states'
+import { STATES, stateRank, worstState, alarmCount, hasNewAlarm, levelState, isActiveAlarm, alarmTag, NOTICE_COLOR, hasActive, isOffRow, byProjectPriority, byActiveFirst } from '@/geo/states'
 import { buildIndexes, query, membersOf, expansionZoom, layoutLabels, circleSize, circleFont, zoomClusterFor, levelFor as levelAt, byPriority, ZOOM_TERMINAL, textWidth, mainMass, leafIndex, anyLeafKey, queryZoom, DOT_SIZE, pickRefreshTarget } from '@/geo/cluster'
 import { fmtNumber } from '@/utils/format'
 import { allOffline, offlineCount } from '@/geo/online'
@@ -205,12 +205,6 @@ function alarmRows(p, open, more) {
 
 const POP_LIMIT = 5
 const GROUP_FIRST = 3
-const hasActive = (p) => (p.alarms || []).some(isActiveAlarm)
-// 行排序：告警 → 预警 → 离线 → 正常（离线对售后是待办，不沉到正常后面）；告警 / 预警永远赢过离线
-const projRank = (p) => (p.state === 'alarm' || p.state === 'warning' ? stateRank(p.state) : p.online === false ? STATES.offline.rank : 0)
-const byProjectPriority = (a, b) =>
-  projRank(b) - projRank(a) || (b.alarms?.length || 0) - (a.alarms?.length || 0) || String(b.created).localeCompare(String(a.created))
-const byActiveFirst = (a, b) => hasActive(b) - hasActive(a) || byProjectPriority(a, b)
 // 小区摘要（分组弹窗排序用）
 const commSummary = (g) => ({ rank: stateRank(worstState(g.projects)), alarms: alarmCount(g.projects), n: g.projects.length })
 // 行点（8 px）：告警 / 预警按状态色（离线不另标，通讯故障告警本身就是离线）；离线 = 实心灰；在线状态未知 = 空心灰圈
@@ -226,7 +220,7 @@ const offText = (projects) => {
 }
 function popoverHtml() {
   const { c, all, toggled, more: moreSet } = pop
-  const row = (p, label) => `<li class="pj${projRank(p) === STATES.offline.rank ? ' off' : ''}">${projDot(p)}
+  const row = (p, label) => `<li class="pj${isOffRow(p) ? ' off' : ''}">${projDot(p)}
         <span class="n">${esc(showName(p.name) || label)}</span><span class="a">${p.area ? `${p.area}㎡` : ''}</span><a class="go" data-pid="${esc(p.id)}" role="button" tabindex="0" title="查看项目详情">详情 ›</a></li>${alarmRows(p, (p.alarms || []).some(isActiveAlarm) !== toggled.has(p.id), moreSet.has(p.id))}`
   let rows
   let grouped = false
