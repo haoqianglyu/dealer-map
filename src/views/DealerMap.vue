@@ -1,9 +1,10 @@
 <template>
   <div class="screen">
     <!-- 地图（主视图，全屏，不缩放） -->
-    <div class="map-layer" :class="{ ready: mapReady || amapNotice }" :style="{ '--dm-scale-bottom': `${34 + 50 * scale}px` }">
+    <div ref="mapLayerEl" class="map-layer" :class="{ ready: mapReady || amapNotice }" :style="{ '--dm-scale-bottom': `${34 + 50 * scale}px` }">
       <AmapView
         v-if="AMapRef"
+        ref="mapView"
         :AMap="AMapRef"
         :communities="communities"
         :districts="districtMarkers"
@@ -56,6 +57,7 @@
           <span class="brand__sep" />
           <CityPicker
             v-if="cityOptions.length > 1 || regionFilter"
+            ref="cityPicker"
             variant="title"
             :model-value="regionFilter"
             :options="cityPickerOptions"
@@ -65,6 +67,7 @@
           <span v-else-if="cityName" class="brand__city">{{ cityName }}</span>
           <CityPicker
             v-if="distributorOptions.length > 1"
+            ref="distPicker"
             :model-value="distributorFilter"
             :options="[{ value: '', label: '全部经销商', count: cityProjects.length }, ...distributorOptions.map((d) => ({ value: d.id, label: d.name, count: d.count }))]"
             label="经销商"
@@ -81,6 +84,10 @@
             <button :class="{ on: heatMetric === 'projects' }" :tabindex="mode === 'heat' ? 0 : -1" @click="heatMetric = 'projects'">项目</button>
             <button :class="{ on: heatMetric === 'alarms' }" :tabindex="mode === 'heat' ? 0 : -1" @click="heatMetric = 'alarms'">告警</button>
           </div>
+          <!-- 展厅巡览：点按 = 立即开始；没有「停止」—— 任何触摸就是停止。1350（compact）下等顶栏减负（第 8 条）后再显示 -->
+          <button v-if="tourCfg.enabled && AMapRef && !compact" class="tour-btn" title="开始自动巡览" aria-label="开始自动巡览" @click="tour.start()">
+            <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M8 5.5v13l10.5-6.5L8 5.5z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" /></svg>
+          </button>
           <div class="clock">
             <b>{{ clock.time }}</b><small>{{ clock.date }}</small>
           </div>
@@ -103,6 +110,19 @@
 
       <div v-if="amapNotice" class="notice">{{ amapNotice }}</div>
       <div v-if="loadError" class="notice notice--err">{{ loadError }}<button @click="reloadAll">重试</button></div>
+
+      <!-- 巡览胶囊（不接收点按：任何点按都由 window 捕获退出巡览） -->
+      <transition name="chip">
+        <div v-if="tour.chip.show" class="tour-chip" :class="{ alarm: tour.chip.alarm }" role="status" aria-live="polite">
+          <i class="tour-chip__dot" aria-hidden="true" />
+          <span v-if="!tour.chip.alarm" class="tour-chip__lead">自动巡览中 · 触摸任意处退出</span>
+          <span v-if="!tour.chip.alarm" class="tour-chip__sep" aria-hidden="true" />
+          <span class="tour-chip__labels">
+            <span :class="{ on: tour.chip.cur === 'a' }">{{ tour.chip.a }}</span>
+            <span :class="{ on: tour.chip.cur === 'b' }">{{ tour.chip.b }}</span>
+          </span>
+        </div>
+      </transition>
 
       <!-- 图例：随模式切换 -->
       <div class="legend">
@@ -154,7 +174,7 @@
             <li
               v-for="a in alarmFeed"
               :key="a.id"
-              :class="{ on: a.active, fresh: a.fresh, off: !a.located, flash: flashId === a.id }"
+              :class="{ on: a.active, fresh: a.fresh, off: !a.located, flash: flashId === a.id, 'tour-on': tourRow?.alarmId === a.id }"
               :data-aid="a.id"
               :title="a.located ? `${fmtAbs(a.ts)} · 点击定位到小区` : `${fmtAbs(a.ts)} · 该小区尚未定位，点击查看项目详情`"
               tabindex="0"
@@ -181,8 +201,8 @@
             <small v-if="areaTotal.show">{{ fmtNumber(areaTotal.city) }} / {{ fmtNumber(areaTotal.all) }}</small>
           </template>
           <!-- 全部区县直接列出（紧凑行高）；放不下时面板内滚动（滚轮不会缩放地图） -->
-          <div v-if="areaRows.length" class="rows">
-            <div v-for="r in areaRows" :key="r.name" class="row" :class="{ 'row--none': r.none }">
+          <div v-if="areaRows.length" ref="rowsEl" class="rows">
+            <div v-for="r in areaRows" :key="r.name" class="row" :class="{ 'row--none': r.none, 'tour-on': !r.none && tourRow?.district === r.name }">
               <span class="name">{{ r.name }}</span>
               <span class="track"><i v-if="!r.none" :style="{ width: r.pct + '%' }" /></span>
               <span class="val">{{ fmtNumber(r.count) }}</span><span class="area">{{ fmtArea(r.area) }}</span>
@@ -209,7 +229,7 @@
 </template>
 
 <script setup>
-import { ref, shallowRef, computed, reactive, watch, onMounted, onBeforeUnmount, nextTick } from 'vue'
+import { ref, shallowRef, computed, reactive, watch, onMounted, onBeforeUnmount, onActivated, onDeactivated, nextTick } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import TechPanel from '@/components/TechPanel.vue'
 import CityPicker from '@/components/CityPicker.vue'
@@ -229,7 +249,9 @@ import { loadShared, postShared } from '@/geo/shared'
 import { hasAmapKey, loadAmap } from '@/geo/amap'
 import { loadOverrides, loadSeed, lookupLocal, createGeocodeQueue, jitter } from '@/geo/geocoder'
 import { regionInfo } from '@/utils/region'
-import { STATES, applyStates, alarmStates, isActiveAlarm, alarmTag } from '@/geo/states'
+import { STATES, applyStates, alarmStates, isActiveAlarm, alarmTag, alarmCount } from '@/geo/states'
+import { useTour, tourConfig } from '@/composables/useTour'
+import { planTour, cityChip, newAlarms } from '@/geo/tourPlan'
 import { createAlarmTracker, retryDelay } from '@/geo/alarmPoll'
 import { applyOnline, groupsOnlineStats, createOnlineTracker, sane } from '@/geo/online'
 import { fmtNumber, fmtArea } from '@/utils/format'
@@ -311,12 +333,14 @@ const focus = shallowRef(null)
 const fit = shallowRef(null)
 const heatMetric = ref('projects')
 let alarmTimer = null
+let alarmOkNow = 0 // 最近一次成功轮询的时刻（新告警判定用）
 const hhmm = (d = new Date()) => `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
 // 失败不清数据（geo/alarmPoll.js）：30 分钟内沿用 + 「告警 hh:mm 未更新」（5 分钟起面板灰条）；之后清空并显示明确的错误态；403 立即清空
 const alarmTracker = createAlarmTracker()
 let alarmInflight = null
 let alarmRetry = 0
 function applyAlarmView(v) {
+  alarmOkNow = v.okAt
   if (alarms.value !== v.alarms) alarms.value = v.alarms
   alarmUpdated.value = v.okAt ? hhmm(new Date(v.okAt)) : ''
   alarmStale.value = Boolean(v.staleSince) && !v.error
@@ -655,23 +679,168 @@ async function revealUnlocated(d) {
     return g.districtName === d.label && !geoResults[g.key]?.lnglat
   }
   const a = alarmSorted.value.find((x) => unloc(x) && isActiveAlarm(x)) || alarmSorted.value.find(unloc)
-  if (!a || !feedEl.value) return
-  if (!alarmFeed.value.some((x) => x.id === a.id)) {
-    pinnedAlarmId.value = a.id
+  if (a) showAlarm(a.id)
+}
+// 告警列表滚到某条（在前 100 条外则追加到末尾），flash = 闪 3 次（「现在看这里」）；scroll = false 只闪不滚
+async function showAlarm(id, { flash = true, scroll = true } = {}) {
+  if (id == null || !feedEl.value) return
+  if (!alarmFeed.value.some((x) => x.id === id)) {
+    if (!alarmSorted.value.some((x) => x.id === id)) return
+    pinnedAlarmId.value = id
     await nextTick()
   }
   const ul = feedEl.value
   if (!ul) return
-  const li = ul.querySelector(`[data-aid="${CSS.escape(String(a.id))}"]`)
-  if (li) ul.scrollTo({ top: Math.max(0, li.offsetTop - ul.clientHeight / 2 + li.offsetHeight / 2), behavior: 'smooth' })
-  flashId.value = a.id
+  const li = ul.querySelector(`[data-aid="${CSS.escape(String(id))}"]`)
+  if (li && scroll) ul.scrollTo({ top: Math.max(0, li.offsetTop - ul.clientHeight / 2 + li.offsetHeight / 2), behavior: reducedMotion() ? 'auto' : 'smooth' })
+  if (!flash) return
+  flashId.value = id
   clearTimeout(flashTimer)
   flashTimer = setTimeout(() => (flashId.value = null), 2400)
 }
+const reducedMotion = () => typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches
 function focusAlarm(a) {
   if (!a.located) return
   mode.value = 'markers'
   focus.value = { key: a.key, n: Date.now() }
+}
+
+// ---------- 展厅待机巡览（docs/fable-autotour.md） ----------
+const mapView = ref(null)
+const mapLayerEl = ref(null)
+const cityPicker = ref(null)
+const distPicker = ref(null)
+const rowsEl = ref(null)
+const tourRow = shallowRef(null) // { district, alarmId }：面板行 / 告警行高亮（只存 id）
+const tourCfg = tourConfig({ search: location.search, hash: location.hash, storage: typeof localStorage === 'undefined' ? null : localStorage })
+// 告警数据能不能当故事讲：沿用 ≥ 5 分钟（aged）/ 错误态 → 不能（规模剧本、无告警热力）
+const alarmsUsable = () => alarmsLoaded.value && !alarmAged.value && !alarmErrorKind.value
+let tourReadyAt = 0
+function tourCanStart() {
+  const ready = Boolean(AMapRef.value && mapView.value && mapReady.value && communities.value.length > 0)
+  if (ready && !tourReadyAt) tourReadyAt = performance.now()
+  const ok =
+    ready &&
+    route.path === MAP_PATH &&
+    document.visibilityState === 'visible' &&
+    !loadError.value &&
+    !document.documentElement.classList.contains('theme-vt') &&
+    (alarmsLoaded.value || performance.now() - tourReadyAt >= 8000) // 告警还没到：最多等 8 s，之后按「不可用」讲规模
+  const reading = mapView.value?.popOpenedBy() === 'user' || Boolean(cityPicker.value?.isOpen?.()) || Boolean(distPicker.value?.isOpen?.()) || helpOpen.value
+  return { ok, reading }
+}
+function tourPlanNow() {
+  const p = planTour({ districts: districtMarkers.value, communities: communities.value, cityCode: cityCode.value, alarmsUsable: alarmsUsable(), sameCity })
+  const inCity = projects.value.filter((x) => x.city === cityCode.value)
+  const comms = groups.value.filter((g) => g.community && g.city === cityCode.value).length
+  return { ...p, city: cityChip({ story: p.story, cityName: cityName.value, projects: inCity.length, communities: comms, activeAlarms: alarmCount(inCity) }) }
+}
+// 面板行高亮：只在面板内滚到可见（不用 scrollIntoView —— 它会连带滚动 overflow:hidden 的外层）
+function setTourRow(r) {
+  tourRow.value = r
+  if (!r?.district) return
+  nextTick(() => {
+    const row = rowsEl.value?.querySelector('.row.tour-on')
+    let box = row?.parentElement
+    while (box && box.scrollHeight <= box.clientHeight + 1) box = box.parentElement
+    if (!row || !box || !box.closest('.p-area')) return
+    const rt = row.getBoundingClientRect()
+    const bt = box.getBoundingClientRect()
+    const delta = rt.top < bt.top ? rt.top - bt.top - 8 : rt.bottom > bt.bottom ? rt.bottom - bt.bottom + 8 : 0
+    if (delta) box.scrollBy({ top: delta, behavior: reducedMotion() ? 'auto' : 'smooth' })
+  })
+}
+let dipTimer = 0
+const tour = useTour({
+  enabled: tourCfg.enabled,
+  idleMs: tourCfg.idleMs,
+  map: () => mapView.value,
+  canStart: tourCanStart,
+  plan: tourPlanNow,
+  getMode: () => mode.value,
+  setMode: (m) => (mode.value = m),
+  getMetric: () => heatMetric.value,
+  setMetric: (m) => (heatMetric.value = m),
+  setRow: setTourRow,
+  revealUnlocated,
+  showAlarm,
+  closeOverlays: () => {
+    mapView.value?.closePop()
+    cityPicker.value?.close?.()
+    distPicker.value?.close?.()
+    helpOpen.value = false
+  },
+  reduced: reducedMotion,
+  // 减少动态：镜头瞬移，地图层一暗一亮（150 + 150 ms）代替移动
+  dip: () => {
+    const el = mapLayerEl.value
+    if (!el) return
+    el.classList.add('tour-dip')
+    clearTimeout(dipTimer)
+    dipTimer = setTimeout(() => el.classList.remove('tour-dip'), 150)
+  },
+})
+onActivated(() => tour.setActive(true))
+onDeactivated(() => tour.setActive(false))
+// ?tour=now：首批标记就绪后立即开始一轮（之后按正常空闲规则）
+let tourNowTimer = 0
+if (tourCfg.now) {
+  const t0 = performance.now()
+  const tryNow = () => {
+    tourNowTimer = 0
+    if (disposed || tour.state.value !== 'idle' || tour.start()) return
+    if (performance.now() - t0 < 60000) tourNowTimer = setTimeout(tryNow, 250)
+  }
+  tourNowTimer = setTimeout(tryNow, 250)
+}
+
+// 新一级告警（§5.4，与第 5 条 toast 共用判定）：id 未见过、进行中、一级、ts > 上次轮询 − 5 min；首轮不算；告警不可用时不算
+let alarmSeen = new Set()
+let alarmSeeded = false
+let alarmPrevOk = 0
+watch(alarms, (list) => {
+  if (!alarmsUsable()) return // 过期 / 错误：不判也不更新「见过」（恢复后与恢复前比）
+  const fresh = alarmSeeded ? newAlarms(list, alarmSeen, alarmPrevOk).filter((a) => projectGroup.value.has(a.projectId)) : []
+  alarmSeen = new Set(list.map((a) => a.id))
+  alarmSeeded = true
+  alarmPrevOk = alarmOkNow
+  if (fresh.length) announceAlarms(fresh)
+})
+function announceAlarms(fresh) {
+  const a = fresh[0] // ts 最新的一条
+  const g = projectGroup.value.get(a.projectId)
+  const located = Boolean(geoResults[g.key]?.lnglat)
+  const head = fresh.length > 1 ? `${fresh.length} 条新一级告警 · 显示最新` : '新一级告警'
+  const chip = `${head} · ${g.community || '未识别小区'} · ${alarmText(a.device, a.content)}${located ? '' : '（未定位）'}`
+  // 巡览中：插播；否则只在列表里闪那一行，不动视野、不滚列表
+  if (!tour.interrupt({ key: g.key, located, district: g.districtName, alarmId: a.id, chip })) showAlarm(a.id, { flash: true, scroll: false })
+}
+if (import.meta.env.DEV) {
+  // 开发环境：巡览状态 / 手动开始停止 / 注入一条新一级告警（located: false → 注入到未定位小区）
+  window.__dmTour = {
+    get state() {
+      return tour.state.value
+    },
+    get step() {
+      return tour.step.value
+    },
+    get plan() {
+      return tour.debug().plan
+    },
+    get chip() {
+      return { ...tour.chip, text: tour.chip[tour.chip.cur] }
+    },
+    debug: () => tour.debug(),
+    start: () => tour.start(),
+    stop: () => tour.stop('dev'),
+    inject({ located = true, key = '' } = {}) {
+      const g = groups.value.find((x) => (key ? x.key === key : Boolean(geoResults[x.key]?.lnglat) === located && x.community))
+      if (!g) return null
+      const a = { id: `dev-${Date.now()}`, projectId: g.projects[0].id, level: 1, status: 1, ts: Date.now(), end: 0, device: '空气处理机(122)', content: '通讯故障（模拟）' }
+      alarms.value = [a, ...alarms.value]
+      return { key: g.key, label: g.community, id: a.id }
+    },
+  }
 }
 
 // ---------- KPI（数值 400ms 缓动） ----------
@@ -994,6 +1163,9 @@ onMounted(async () => {
 
 onBeforeUnmount(() => {
   disposed = true
+  tour.dispose()
+  clearTimeout(tourNowTimer)
+  clearTimeout(dipTimer)
   clearInterval(clockTimer)
   clearInterval(onlineExpiry)
   clearInterval(alarmTimer)
@@ -1138,6 +1310,32 @@ onBeforeUnmount(() => {
     .tag--on {
       color: var(--dm-alarm-text);
     }
+  }
+  .tour-btn {
+    color: var(--dm-text);
+    background: rgba(16, 33, 58, 0.04);
+    border-color: rgba(16, 33, 58, 0.14);
+    &:hover,
+    &:focus-visible {
+      background: rgba(16, 33, 58, 0.08);
+    }
+  }
+  .tour-chip {
+    color: var(--dm-text-2);
+    background: var(--dm-panel-solid);
+    border-color: var(--dm-line);
+    box-shadow: var(--dm-shadow);
+    backdrop-filter: none;
+    &__labels {
+      color: var(--dm-text);
+    }
+  }
+  .rows .row.tour-on {
+    background: var(--dm-hover);
+    box-shadow: inset 3px 0 0 var(--dm-accent), 0 -3px 0 var(--dm-hover), 0 3px 0 var(--dm-hover);
+  }
+  .alarms li.tour-on {
+    background: var(--dm-hover);
   }
   .rows {
     .track {
@@ -1975,6 +2173,123 @@ onBeforeUnmount(() => {
     white-space: nowrap;
   }
 }
+/* ---------- 展厅巡览 ---------- */
+.map-layer.ready.tour-dip {
+  opacity: 0.35;
+  transition: opacity 0.15s;
+}
+.tour-btn {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: max(40px, calc(40px / var(--ui-scale, 1)));
+  height: max(40px, calc(40px / var(--ui-scale, 1)));
+  padding: 0;
+  color: #fff;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid var(--dm-line);
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
+  &:hover,
+  &:focus-visible {
+    background: rgba(255, 255, 255, 0.12);
+    border-color: var(--dm-accent);
+  }
+  &:focus-visible {
+    outline: 2px solid var(--dm-accent);
+    outline-offset: 2px;
+  }
+}
+.tour-chip {
+  position: absolute;
+  top: 108px;
+  left: 24px;
+  z-index: 11;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 40px;
+  max-width: calc(100% - 24px - 380px - 48px);
+  padding: 0 14px;
+  font: 13px var(--dm-font);
+  color: #b7d3f0;
+  white-space: nowrap;
+  background: rgba(4, 11, 24, 0.9);
+  border: 1px solid rgba(120, 170, 255, 0.2);
+  border-radius: 20px;
+  backdrop-filter: blur(8px);
+  pointer-events: none;
+  font-variant-numeric: tabular-nums;
+  &__dot {
+    flex: none;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--dm-accent);
+    animation: breathe 1.6s ease-in-out infinite;
+  }
+  &.alarm &__dot {
+    background: var(--dm-alarm);
+  }
+  &__sep {
+    flex: none;
+    width: 1px;
+    height: 16px;
+    background: var(--dm-line);
+  }
+  /* 标签换文字：两个 span 交叉淡入 200 ms（不在显示的那个绝对定位，不撑宽度、不做宽度动画） */
+  &__labels {
+    position: relative;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    color: var(--dm-text);
+    > span {
+      transition: opacity 0.2s ease;
+      opacity: 0;
+      position: absolute;
+      left: 0;
+      top: 0;
+    }
+    > span.on {
+      position: static;
+      opacity: 1;
+    }
+  }
+}
+.chip-enter-active {
+  transition: opacity 0.2s ease;
+}
+.chip-leave-active {
+  transition: opacity 0.1s ease; /* 退出 ≤ 100 ms */
+}
+.chip-enter-from,
+.chip-leave-to {
+  opacity: 0;
+}
+@media (prefers-reduced-motion: reduce) {
+  .tour-chip__dot {
+    animation: none;
+  }
+  .tour-chip__labels > span {
+    transition: none;
+  }
+}
+.rows .row.tour-on {
+  /* 不改行高 / 列宽：横向外扩 8 px 画底色，左侧 3 px 竖条用内阴影 */
+  margin: 0 -8px;
+  padding: 0 8px;
+  border-radius: 3px;
+  background: rgba(53, 212, 255, 0.08);
+  box-shadow: inset 3px 0 0 var(--dm-accent), 0 -3px 0 rgba(53, 212, 255, 0.08), 0 3px 0 rgba(53, 212, 255, 0.08);
+}
+.alarms li.tour-on {
+  opacity: 1;
+  background: rgba(53, 212, 255, 0.08);
+}
+
 .chart-box {
   position: relative;
   height: 100%;

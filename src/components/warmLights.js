@@ -48,6 +48,8 @@ export function createWarmLights(AMap, map) {
   let paletteName = 'gold'
   let palette = PALETTES.gold
   let visible = false
+  let lingering = false // 淡出中（400 ms）：仍照常绘制
+  let fadeT = 0
   let raf = 0
 
   // 高德把 canvas 包在带 z-index 的 .amap-layer 里（独立层叠上下文），只给 canvas 设 multiply 只会和透明的父层相乘；
@@ -84,7 +86,7 @@ export function createWarmLights(AMap, map) {
       labelCanvas.width = 0 // 深色：数字仍画在光层上（原样），第二张清空
       labelCanvas.height = 0
     }
-    if (!visible) return
+    if (!visible && !lingering) return
     // 轻微压暗底图（不能太重，否则底图地名/道路看不清）；亮色 multiply 下不画
     if (mode.dim) {
       ctx.fillStyle = 'rgba(14, 14, 16, 0.28)'
@@ -143,7 +145,7 @@ export function createWarmLights(AMap, map) {
     }
     if (pulsing) schedule() // 有呼吸灯时持续逐帧重绘
   }
-  const syncLabel = () => (visible && MODE[paletteName].blend === 'multiply' ? labelLayer.show() : labelLayer.hide())
+  const syncLabel = () => ((visible || lingering) && MODE[paletteName].blend === 'multiply' ? labelLayer.show() : labelLayer.hide())
   const schedule = () => {
     if (!raf) raf = requestAnimationFrame(draw)
   }
@@ -166,14 +168,42 @@ export function createWarmLights(AMap, map) {
       syncLabel()
       schedule()
     },
+    // 点位 ↔ 热力：canvas 400 ms 淡入淡出（docs/fable-autotour.md §2）；prefers-reduced-motion 时瞬时；点位模式下整层隐藏
     show(v) {
+      const was = visible
       visible = v
-      v ? layer.show() : layer.hide() // 点位模式下整层隐藏
+      const ms = typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches ? 0 : 400
+      const cvs = [canvas, labelCanvas]
+      clearTimeout(fadeT)
+      for (const cv of cvs) cv.style.transition = ms ? `opacity ${ms}ms ease` : ''
+      if (v) {
+        lingering = false
+        layer.show()
+        if (!was && ms) {
+          for (const cv of cvs) cv.style.opacity = '0'
+          void canvas.offsetWidth // 先落定 0，再过渡到 1
+        }
+        for (const cv of cvs) cv.style.opacity = '1'
+      } else if (was && ms) {
+        lingering = true
+        for (const cv of cvs) cv.style.opacity = '0'
+        fadeT = setTimeout(() => {
+          lingering = false
+          if (visible) return
+          layer.hide()
+          syncLabel()
+          schedule()
+        }, ms)
+      } else {
+        lingering = false
+        layer.hide()
+      }
       syncLabel()
       schedule()
     },
     destroy() {
       cancelAnimationFrame(raf)
+      clearTimeout(fadeT)
       map.off('mapmove', schedule)
       map.off('zoomchange', schedule)
       map.off('resize', schedule)

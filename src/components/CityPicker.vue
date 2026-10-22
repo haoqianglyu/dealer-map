@@ -135,6 +135,8 @@ const onDoc = (e) => {
   if (open.value && root.value && !root.value.contains(e.target)) close(false)
 }
 onMounted(() => document.addEventListener('pointerdown', onDoc))
+// 展厅巡览：下拉开着 = 有人在用（阈值 × 5）；600 s 无输入后由巡览收起
+defineExpose({ isOpen: () => open.value, close: () => open.value && close(false) })
 onBeforeUnmount(() => document.removeEventListener('pointerdown', onDoc))
 </script>
 
