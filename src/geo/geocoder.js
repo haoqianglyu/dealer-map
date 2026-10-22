@@ -5,7 +5,7 @@
 // 缓存 key = 归一化查询串（市+区+小区）；已确认永久缓存，未确认缓存 7 天（高德「基础搜索」月配额仅 5000 次），
 // 「重新定位待校正」按钮可强制重查。只存坐标/匹配级别/高德返回的名称地址，不存任何项目/客户信息。
 
-const CACHE_VERSION = 'v8' // v8：小区名归一化规则 v2（NORMALIZE_VERSION）
+const CACHE_VERSION = 'v9' // v9：小区名归一化规则 v3（NORMALIZE_VERSION：市/区县前缀、叠拼、繁体、镇名）
 const CACHE_KEY = `dealer-map:geo:${CACHE_VERSION}`
 const FAIL_TTL = 7 * 24 * 3600 * 1000
 
@@ -157,7 +157,8 @@ export const seedKey = (district, query) => `${district || ''}|${query}`
 // 不访问网络的查找：override → seed → 缓存（已确认；或 7 天内的未确认结果）。
 // 种子/缓存里的已确认结果按当前规则离线复核（有匹配名称时复核名称；无名称时泛称/短名一律待校正），不发请求。
 export function lookupLocal(group, overrides, seed = {}, { ignoreSeedFail = false } = {}) {
-  const { queries, district } = group
+  const { queries } = group
+  const district = group.district || group.city // 全市范围查询（名称前缀只给出市）的种子 / 共享 key 用市 adcode
   const c = loadCache()
   const kwOf = (i) => stripPlace(group.keywords?.[i] || group.community, group)
   // 无匹配名称（旧种子）时无法核对：泛称/短名、带分期的一律待校正

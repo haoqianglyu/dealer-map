@@ -355,10 +355,11 @@ const projects = computed(() => {
 const groups = computed(() => {
   const m = new Map()
   for (const p of projects.value) {
-    const key = p.community ? `${p.district || p.city}|${p.community}` : `#${p.id}`
+    // 分组 / 缓存按地理编码范围（geoDistrict：区县，'' = 全市）；展示、汇总按所填区县（areaDistrict）
+    const key = p.community ? `${p.geoDistrict || p.city}|${p.community}` : `#${p.id}`
     let g = m.get(key)
     if (!g) {
-      g = { key, community: p.community, queries: p.queries, keywords: p.keywords, geoCity: p.geoCity, city: p.city, cityName: p.cityName, district: p.district, districtName: p.districtName, count: 0, area: 0, types: new Set(), latest: '', projects: [] }
+      g = { key, community: p.community, vague: p.vague, queries: p.queries, keywords: p.keywords, geoCity: p.geoCity, city: p.city, cityName: p.cityName, district: p.geoDistrict, areaDistrict: p.district, districtName: p.districtName, count: 0, area: 0, types: new Set(), latest: '', projects: [] }
       m.set(key, g)
     }
     g.count++
@@ -381,14 +382,14 @@ const districtCenters = computed(() => {
 const districtCenter = (code) => districtCenters.value[code] || (regionInfo(code) && [regionInfo(code).lng, regionInfo(code).lat])
 
 function fallbackPos(g) {
-  return jitter(districtCenter(g.district) || center.value || [120.31, 31.49], g.key)
+  return jitter(districtCenter(g.areaDistrict || g.district) || center.value || [120.31, 31.49], g.key)
 }
 
 // 每个「已确认」小区一个标记；未确认的不上图
 const communities = computed(() =>
   groups.value
     .filter((g) => geoResults[g.key]?.lnglat)
-    .map((g) => ({ key: g.key, lnglat: geoResults[g.key].lnglat, exact: true, label: g.community || '未识别小区', district: g.district, districtName: g.districtName, projects: g.projects }))
+    .map((g) => ({ key: g.key, lnglat: geoResults[g.key].lnglat, exact: true, label: g.community || '未识别小区', district: g.areaDistrict, districtName: g.districtName, projects: g.projects }))
 )
 
 // 缩小时按区县汇总
@@ -709,7 +710,7 @@ async function initAmap() {
       maxSearches: REVERIFY ? 400 : 150,
       onResult: (g, res) => {
         geoResults[g.key] = res
-        if (res.lnglat && res.source === 'amap' && g.district) postShared({ key: res.query, adcode: g.district, lnglat: res.lnglat, matched: res.matched, address: res.address, source: res.level })
+        if (res.lnglat && res.source === 'amap' && (g.district || g.city)) postShared({ key: res.query, adcode: g.district || g.city, lnglat: res.lnglat, matched: res.matched, address: res.address, source: res.level })
       },
       onFatal: (info) => {
         amapNotice.value = `高德 Key 不可用（${info}）：请检查是否为「Web端(JS API)」Key 及安全密钥、域名白名单。`
