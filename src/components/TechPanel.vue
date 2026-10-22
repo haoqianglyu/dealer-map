@@ -23,6 +23,15 @@ defineProps({
 </script>
 
 <style scoped lang="scss">
+/* 亮色：面板靠阴影分层（docs/fable-light-theme.md §4）；深色不变 */
+:root[data-theme='light'] {
+  .tech-panel {
+    box-shadow: var(--dm-shadow);
+  }
+  .panel-skel i {
+    background-image: linear-gradient(90deg, rgba(16, 33, 58, 0.06), rgba(16, 33, 58, 0.12), rgba(16, 33, 58, 0.06));
+  }
+}
 .tech-panel {
   position: relative;
   display: flex;

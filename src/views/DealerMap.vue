@@ -921,6 +921,126 @@ onBeforeUnmount(() => {
       background: rgba(16, 33, 58, 0.08);
     }
   }
+  .boot {
+    background: radial-gradient(60% 70% at 50% 50%, rgba(14, 116, 144, 0.08), transparent 70%), rgba(238, 242, 246, 0.94);
+    &__ring {
+      border-color: rgba(14, 116, 144, 0.2);
+      border-top-color: var(--dm-accent);
+    }
+  }
+  .geo-bar {
+    background: rgba(14, 116, 144, 0.12);
+    i {
+      background: linear-gradient(90deg, #1d6fd6, var(--dm-accent));
+    }
+  }
+  .notice {
+    color: var(--dm-warn-text);
+    background: rgba(255, 250, 240, 0.96);
+    border-color: rgba(161, 98, 7, 0.45);
+    box-shadow: var(--dm-shadow);
+    &--err {
+      color: var(--dm-alarm-text);
+      background: rgba(255, 243, 243, 0.96);
+      border-color: rgba(215, 38, 61, 0.45);
+    }
+    button {
+      color: var(--dm-text);
+      background: rgba(16, 33, 58, 0.05);
+      border-color: rgba(16, 33, 58, 0.2);
+    }
+  }
+  /* 图例 / 状态行：实底白 + 阴影（标记从后面经过不透出） */
+  .legend {
+    background: var(--dm-panel-solid);
+    box-shadow: var(--dm-shadow);
+    .help em {
+      background: rgba(255, 255, 255, 0.98);
+      box-shadow: var(--dm-shadow-pop);
+    }
+  }
+  .status {
+    color: var(--dm-text-3);
+    background: var(--dm-panel-solid);
+    box-shadow: var(--dm-shadow);
+    .ring {
+      border-color: rgba(14, 116, 144, 0.25);
+      border-top-color: var(--dm-accent);
+    }
+  }
+  .kpis {
+    box-shadow: var(--dm-shadow);
+    .kpi {
+      border-left-color: var(--dm-line-2);
+      &:nth-child(n + 4) {
+        border-top-color: var(--dm-line-2);
+      }
+      span {
+        color: var(--dm-text-3);
+      }
+    }
+    &.skel b {
+      background-image: linear-gradient(90deg, rgba(16, 33, 58, 0.06), rgba(16, 33, 58, 0.12), rgba(16, 33, 58, 0.06));
+    }
+  }
+  .ok svg * {
+    stroke: var(--dm-ok);
+  }
+  /* 告警列表：已处理 / 已恢复不用 opacity（深墨 55% 只有 3.7:1），改颜色降档 */
+  .alarms {
+    li {
+      border-bottom-color: var(--dm-line-2);
+      &:hover {
+        background: var(--dm-hover);
+      }
+      &:not(.on) {
+        opacity: 1;
+        .name {
+          color: #5b6b80;
+        }
+        .l1 small,
+        .t,
+        .meta,
+        .tag {
+          color: #62728a;
+        }
+        .chev {
+          color: #8a97a8;
+        }
+      }
+      &.flash {
+        animation-name: feed-flash-light;
+      }
+    }
+    .l1 small {
+      color: var(--dm-text-3);
+    }
+    .unloc {
+      color: var(--dm-warn-text);
+      background: rgba(161, 98, 7, 0.08);
+      border-color: rgba(161, 98, 7, 0.4);
+    }
+    .tag--on {
+      color: var(--dm-alarm-text);
+    }
+  }
+  .rows {
+    .track {
+      background: rgba(16, 33, 58, 0.08);
+      i {
+        background: #4b97ac;
+      }
+    }
+    .row:first-child .track i {
+      background: var(--dm-accent);
+    }
+  }
+}
+@keyframes feed-flash-light {
+  50% {
+    background: rgba(161, 98, 7, 0.12);
+    box-shadow: inset 0 0 0 1px rgba(161, 98, 7, 0.5);
+  }
 }
 .screen {
   position: relative;
