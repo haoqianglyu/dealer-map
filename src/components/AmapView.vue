@@ -9,7 +9,7 @@ import { showName } from '@/utils/showroom'
 import { mountMarquee, alarmText } from '@/directives/marquee'
 import CONTEXT_CITIES from '@/data/cities-context.json'
 import { STATES, stateRank, worstState, alarmCount, hasNewAlarm, levelState, isActiveAlarm, NOTICE_COLOR } from '@/geo/states'
-import { buildIndexes, query, membersOf, expansionZoom, layoutLabels, circleSize, circleFont, zoomClusterFor, levelFor as levelAt, byPriority, ZOOM_TERMINAL, textWidth, mainMass, leafIndex, anyLeafKey, queryZoom, DOT_SIZE } from '@/geo/cluster'
+import { buildIndexes, query, membersOf, expansionZoom, layoutLabels, circleSize, circleFont, zoomClusterFor, levelFor as levelAt, byPriority, ZOOM_TERMINAL, textWidth, mainMass, leafIndex, anyLeafKey, queryZoom, DOT_SIZE, pickRefreshTarget } from '@/geo/cluster'
 import { fmtNumber } from '@/utils/format'
 
 // 高德地图：自定义 HTML 标记 + 暖光热力。标记四个层级（docs/fable-clustering.md）：
@@ -627,10 +627,10 @@ function groupContent(it, focusKey = null) {
 // 索引重建后（加载中新小区刚定位、并进了打开着的终态簇）：按新成员重绘分组弹窗，保留展开状态
 function refreshGroupPopover() {
   if (!pop?.c?.groups || level !== 'terminal') return // 只在终态级（缩小后的簇不是同一个分组）
-  const old = pop.c.memberKeys.split('\n')
-  const it = lastItems.find((i) => i.clusterId != null && membersOf(indexes, i).some((m) => old.includes(m.key)))
-  if (!it) return
-  const c = groupContent(it, pop.c.focusKey)
+  const t = pickRefreshTarget(indexes, lastItems, pop.c.memberKeys.split('\n'), pop.c.focusKey)
+  if (!t) return
+  if (t.item.clusterId == null) return openPopover(t.members[0]) // 聚焦的小区被拆出来成了单小区：改出它自己的弹窗
+  const c = groupContent(t.item, pop.c.focusKey)
   if (c.memberKeys === pop.c.memberKeys) return
   pop.c = c
   openPopover(c, true)

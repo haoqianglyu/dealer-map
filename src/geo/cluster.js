@@ -103,6 +103,23 @@ export function membersOf(indexes, item) {
     .map((f) => indexes.byKey.get(f.properties.key))
     .filter(Boolean)
 }
+// 索引重建后给打开着的分组弹窗找「同一个」项（items = 当前视图的簇 + 单小区）：
+//   1. 含 focusKey 的项（可能已拆成单小区）；2. 否则含旧成员最多的项（并列时簇优先，保持分组弹窗）
+// → { item, members } 或 null
+export function pickRefreshTarget(indexes, items, oldKeys, focusKey = null) {
+  const old = new Set(oldKeys)
+  let best = null
+  for (const item of items) {
+    if (item.clusterId == null && !item.key) continue
+    const members = membersOf(indexes, item)
+    if (focusKey && members.some((m) => m.key === focusKey)) return { item, members }
+    const hits = members.reduce((n, m) => n + old.has(m.key), 0)
+    if (!hits) continue
+    const isCluster = item.clusterId != null
+    if (!best || hits > best.hits || (hits === best.hits && isCluster && best.item.clusterId == null)) best = { item, members, hits }
+  }
+  return best && { item: best.item, members: best.members }
+}
 // 点击簇：放大到刚好拆开的级别；> 16 = 终态（不再拆，出分组弹窗）
 export const expansionZoom = (item) => (item.clusterId == null ? null : item.idx.getClusterExpansionZoom(item.clusterId))
 

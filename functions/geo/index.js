@@ -105,8 +105,9 @@ function limited(id) {
 }
 
 // ---------------------------------------------------------------- 校验
-// 户号：# 号，或「数字（阿拉伯 / 中文 / 字母楼号）+ 栋/幢/座/号楼/单元/室/层」；单个「元」「室」等字不算（「天元世家」「兰室」是小区名）
-const UNIT_RE = /[#＃]|[0-9０-９A-Za-z一二三四五六七八九十百零〇两壹贰叁肆伍陆柒捌玖拾]+\s*(?:栋|幢|座|号楼|单元|室|层)/;
+// 户号：# 号，或「楼号（阿拉伯 / 中文数字、天干 甲乙丙…、字母）+ 栋/幢/座/号楼/单元/室/层」，或「东/西/南/北 + 栋/幢/座」；
+// 单个「元」「室」等字不算（「天元世家」「兰室」是小区名）。先 NFKC 归一：全角 Ａ２＃ → 半角 A2#
+const UNIT_RE = /#|[0-9A-Za-z一二三四五六七八九十百千零〇两壹贰叁肆伍陆柒捌玖拾佰甲乙丙丁戊己庚辛壬癸]+\s*(?:栋|幢|座|号楼|单元|室|层)|[东西南北]\s*(?:栋|幢|座)/;
 const clean = (s, n) => String(s == null ? '' : s).replace(/[\u0000-\u001f]/g, '').trim().slice(0, n);
 function validate(b) {
   if (!b || typeof b !== 'object') return 'bad body';
@@ -114,8 +115,9 @@ function validate(b) {
   const adcode = String(b.adcode || '');
   const lng = Number(b.lng), lat = Number(b.lat);
   if (!key || key.length > 64) return 'bad key';
-  if (/\d/.test(key)) return 'key must not contain digits'; // 归一化小区名里不会有楼栋/户号数字
-  if (UNIT_RE.test(key)) return 'key looks like a unit address';
+  const nk = key.normalize('NFKC'); // 全角数字/字母也要拦（JS 的 \d 只认 ASCII）
+  if (/\p{Nd}/u.test(nk)) return 'key must not contain digits'; // 归一化小区名里不会有楼栋/户号数字
+  if (UNIT_RE.test(nk)) return 'key looks like a unit address';
   if (!/^\d{6}$/.test(adcode)) return 'bad adcode';
   if (!Number.isFinite(lng) || !Number.isFinite(lat) || lng < 73.4 || lng > 135.2 || lat < 18 || lat > 53.7) return 'outside China';
   const c = CENTERS[adcode] || CENTERS[adcode.slice(0, 4) + '00'];

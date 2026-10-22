@@ -177,3 +177,40 @@ test('动画父项：放大后新项的成员 key 落在上一帧的簇里', () 
     }
   })
 })
+
+// 加载中新小区定位后重建索引：打开着的分组弹窗要跟着「同一个」项，不能跳到第一个相交的簇
+test('pickRefreshTarget：聚焦 B 的分组弹窗在 [A,B] → [C,A] + B 时跟着 B（含单小区）', async () => {
+  const { pickRefreshTarget } = await import('../src/geo/cluster.js')
+  const lat = 31.53
+  const A = C('A', [120.27, lat], [P(1)])
+  const B = C('B', [120.2709, lat], [P(2)])
+  const Cn = C('C', [120.2691, lat], [P(3)])
+  const before = query(buildIndexes([A, B]), 'terminal', WORLD, 16)
+  assert.equal(before.length, 1)
+  const idx = buildIndexes([Cn, A, B])
+  const items = query(idx, 'terminal', WORLD, 16)
+  const sets = items.map((i) => membersOf(idx, i).map((m) => m.key).sort().join(',')).sort()
+  assert.deepEqual(sets, ['A,C', 'B']) // 复现：C 抢走了 A，B 单独成点
+  const t = pickRefreshTarget(idx, items, ['A', 'B'], 'B')
+  assert.equal(t.item.key, 'B')
+  assert.deepEqual(t.members.map((m) => m.key), ['B'])
+})
+
+test('pickRefreshTarget：没有 focusKey 时取含旧成员最多的项', async () => {
+  const { pickRefreshTarget } = await import('../src/geo/cluster.js')
+  const lat = 31.53
+  const A = C('A', [120.27, lat], [P(1)])
+  const B = C('B', [120.2709, lat], [P(2)])
+  const E = C('E', [120.271, lat], [P(4)])
+  const Cn = C('C', [120.2691, lat], [P(3)])
+  assert.equal(query(buildIndexes([A, B, E]), 'terminal', WORLD, 16).length, 1)
+  const idx = buildIndexes([Cn, A, B, E])
+  const items = query(idx, 'terminal', WORLD, 16)
+  const sets = items.map((i) => membersOf(idx, i).map((m) => m.key).sort().join(',')).sort()
+  assert.deepEqual(sets, ['A,C', 'B,E'])
+  for (const order of [items, [...items].reverse()]) {
+    const t = pickRefreshTarget(idx, order, ['A', 'B', 'E'], null)
+    assert.deepEqual(t.members.map((m) => m.key).sort(), ['B', 'E'])
+  }
+  assert.equal(pickRefreshTarget(idx, items, ['Z'], null), null)
+})
