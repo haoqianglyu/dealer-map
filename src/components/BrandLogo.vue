@@ -34,4 +34,7 @@ const brand = computed(() => brandFor(props.name))
   letter-spacing: 3px;
   color: #fff;
 }
+:root[data-theme='light'] .brand-logo__text {
+  color: var(--dm-text);
+}
 </style>

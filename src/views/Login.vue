@@ -74,6 +74,7 @@ import { useScreenScale } from '@/composables/useScreenScale'
 import { defaultBrand } from '@/config/brand'
 import BrandLogo from '@/components/BrandLogo.vue'
 import LIGHTS from '@/assets/login-lights.json'
+import { theme } from '@/composables/useTheme'
 
 const { style: screenStyle } = useScreenScale()
 const router = useRouter()
@@ -138,6 +139,9 @@ const reduced = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches
 const HALO = [255, 184, 87]
 const CORE = [255, 222, 158]
 const FIL = [255, 245, 219]
+// 亮色「墨染」（§5.3）：赭石三色，元素与层内都 multiply
+const INK = { halo: [196, 138, 46], core: [168, 106, 24], fil: [107, 61, 8], a: [0.32, 0.5, 0.9], op: 'multiply' }
+const GLOW = { halo: HALO, core: CORE, fil: FIL, a: [0.42, 0.6, 0.9], op: 'lighter' }
 function glow(ctx, x, y, r, [R, G, B], a) {
   const g = ctx.createRadialGradient(x, y, 0, x, y, r)
   g.addColorStop(0, `rgba(${R},${G},${B},${a})`)
@@ -161,7 +165,10 @@ function draw(t = 0) {
   const ctx = c.getContext('2d')
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
   ctx.clearRect(0, 0, w, h)
-  ctx.globalCompositeOperation = 'lighter'
+  const m = theme.value === 'light' ? INK : GLOW
+  const blend = m === INK ? 'multiply' : ''
+  if (c.style.mixBlendMode !== blend) c.style.mixBlendMode = blend
+  ctx.globalCompositeOperation = m.op
   const k = (h * 0.95) / 1.6 // 像素 / 纬度
   const cx = w * 0.55
   const cy = h * 0.52
@@ -171,9 +178,9 @@ function draw(t = 0) {
     const y = cy - (lat - 31.55) * k
     if (x < -40 || y < -40 || x > w + 40 || y > h + 40) continue
     const r = 10 + Math.sqrt(n) * 9
-    glow(ctx, x, y, r, HALO, 0.42 * breath)
-    glow(ctx, x, y, Math.min(r * 0.3, 7), CORE, 0.6)
-    glow(ctx, x, y, 2.4, FIL, 0.9)
+    glow(ctx, x, y, r, m.halo, m.a[0] * breath)
+    glow(ctx, x, y, Math.min(r * 0.3, 7), m.core, m.a[1])
+    glow(ctx, x, y, 2.4, m.fil, m.a[2])
   }
   ctx.globalCompositeOperation = 'source-over'
   if (!reduced) raf = requestAnimationFrame(draw)
@@ -187,6 +194,125 @@ onBeforeUnmount(() => cancelAnimationFrame(raf))
 </script>
 
 <style scoped lang="scss">
+/* ---------- 亮色主题（docs/fable-light-theme.md §6）：只加覆盖，深色规则不动 ---------- */
+:root[data-theme='light'] {
+  .login {
+    background: #eef2f6;
+  }
+  .stage__vignette {
+    background: radial-gradient(60% 80% at 38% 55%, rgba(14, 116, 144, 0.1), transparent 70%), linear-gradient(90deg, transparent 70%, #eef2f6);
+  }
+  .stage__copy {
+    h1 {
+      color: #10213a;
+    }
+    p {
+      color: #3b4f6b;
+    }
+  }
+  .stage__foot {
+    color: #5b6b80;
+  }
+  .card {
+    background: rgba(255, 255, 255, 0.88);
+    border-color: rgba(16, 33, 58, 0.1);
+    box-shadow: 0 24px 64px rgba(16, 33, 58, 0.14);
+    color: #10213a;
+    h2 {
+      color: #10213a;
+    }
+  }
+  .card__sub {
+    color: #5b6b80;
+  }
+  .card__notice {
+    color: #8a5200;
+    background: rgba(161, 98, 7, 0.08);
+    border-color: rgba(161, 98, 7, 0.35);
+  }
+  .field {
+    label {
+      color: #3b4f6b;
+    }
+    input {
+      color: #10213a;
+      background: #ffffff;
+      border-color: rgba(16, 33, 58, 0.16);
+      &::placeholder {
+        color: #7b8899;
+      }
+      &:hover {
+        border-color: rgba(16, 33, 58, 0.28);
+      }
+      &:focus {
+        border-color: #0e7490;
+        box-shadow: 0 0 0 3px rgba(14, 116, 144, 0.18);
+      }
+      &:-webkit-autofill {
+        -webkit-text-fill-color: #10213a;
+        -webkit-box-shadow: 0 0 0 100px #ffffff inset;
+        caret-color: #10213a;
+      }
+    }
+    &.err input {
+      border-color: rgba(215, 38, 61, 0.7);
+      &:focus {
+        box-shadow: 0 0 0 3px rgba(215, 38, 61, 0.18);
+      }
+    }
+    .msg {
+      color: #b42318;
+      i {
+        color: #fff;
+        background: #d7263d;
+      }
+      &--warn {
+        color: #8a5200;
+        i {
+          background: #a16207;
+        }
+      }
+    }
+  }
+  .eye {
+    color: #5b6b80;
+    &:hover {
+      color: #10213a;
+      background: rgba(16, 33, 58, 0.06);
+    }
+    &:focus-visible {
+      color: #10213a;
+      box-shadow: 0 0 0 2px #0e7490 inset;
+    }
+  }
+  .remember {
+    color: #3b4f6b;
+    input {
+      accent-color: #0e7490;
+      &:focus-visible {
+        outline-color: #0e7490;
+      }
+    }
+  }
+  .submit {
+    color: #fff;
+    background: #0e7490;
+    &:hover:not(:disabled) {
+      background: #0b5f77;
+    }
+    &:focus-visible {
+      outline: none;
+      box-shadow: 0 0 0 2px #fff, 0 0 0 4px #0e7490;
+    }
+    &__spin {
+      border-color: rgba(255, 255, 255, 0.35);
+      border-top-color: #fff;
+    }
+    &.done {
+      background: #0f8a5f;
+    }
+  }
+}
 .login {
   position: relative;
   width: 100vw;
