@@ -76,13 +76,13 @@
         </div>
         <div class="controls">
           <div v-if="AMapRef" class="seg">
-            <button :class="{ on: mode === 'markers' }" @click="mode = 'markers'">点位</button>
-            <button :class="{ on: mode === 'heat' }" @click="mode = 'heat'">热力</button>
+            <button :class="{ on: mode === 'markers' }" @click="mode = 'markers'"><svg class="seg__ic" viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 21s-6.5-5.6-6.5-11a6.5 6.5 0 0 1 13 0c0 5.4-6.5 11-6.5 11z" /><circle cx="12" cy="10" r="2.3" /></g></svg>点位</button>
+            <button :class="{ on: mode === 'heat' }" @click="mode = 'heat'"><svg class="seg__ic" viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 21.5c-3.9 0-6.5-2.6-6.5-6.2 0-3.3 2.3-5.4 3.7-7.6.9 1.6 1.7 2.4 2.6 2.9.2-2.6 1.4-5.3 3.3-7.1.3 3.3 3.4 6.2 3.4 11.2 0 4.1-2.7 6.8-6.5 6.8z" /><path d="M12 21.5c-1.6 0-2.7-1.1-2.7-2.7 0-1.8 1.4-2.8 2.7-4.4 1.3 1.6 2.7 2.6 2.7 4.4 0 1.6-1.1 2.7-2.7 2.7z" /></g></svg>热力</button>
           </div>
           <!-- 二级分段常驻占位（点位模式下隐藏），切换模式时顶栏不跳动 -->
           <div v-if="AMapRef" class="seg seg--sub" :class="{ hidden: mode !== 'heat' }" :aria-hidden="mode !== 'heat'">
-            <button :class="{ on: heatMetric === 'projects' }" :tabindex="mode === 'heat' ? 0 : -1" @click="heatMetric = 'projects'">项目</button>
-            <button :class="{ on: heatMetric === 'alarms' }" :tabindex="mode === 'heat' ? 0 : -1" @click="heatMetric = 'alarms'">告警</button>
+            <button :class="{ on: heatMetric === 'projects' }" :tabindex="mode === 'heat' ? 0 : -1" @click="heatMetric = 'projects'"><svg class="seg__ic" viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4.5 20.5V5.5l8-3v18M12.5 8.5l7 2.5v9.5M3 20.5h18M7.5 8h2M7.5 11.5h2M7.5 15h2M15.5 13h1.5M15.5 16.5h1.5" /></g></svg>项目</button>
+            <button :class="{ on: heatMetric === 'alarms' }" :tabindex="mode === 'heat' ? 0 : -1" @click="heatMetric = 'alarms'"><svg class="seg__ic" viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M6 16.5V11a6 6 0 0 1 12 0v5.5l1.5 2H4.5l1.5-2zM10 21h4" /></g></svg>告警</button>
           </div>
           <!-- 展厅巡航开关（一个开关，没有悬停态）：开 = 空闲 120 s 后自动巡览；关 = 巡览中立即退出且不再自动开始。
                状态存 localStorage.dm_tour；?tour=off|now 只覆盖本次会话；「立即开始」用 ?tour=now -->
@@ -96,7 +96,7 @@
             :title="tourOn ? '自动巡航已开：无人操作 2 分钟后自动讲解（点按关闭）' : '自动巡航已关（点按开启）'"
             @click="toggleTour"
           >
-            <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 21s-6.5-5.6-6.5-11a6.5 6.5 0 0 1 13 0c0 5.4-6.5 11-6.5 11z" /><path d="M10.2 7.4v5.2l4.3-2.6-4.3-2.6z" /></g></svg>
+            <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20 12a8 8 0 1 1-2.3-5.6M20 4v4.5h-4.5" /><path d="M10.3 9v6l5-3-5-3z" /></g></svg>
             <span class="tour-tg__label">巡航</span>
             <span class="tour-tg__track" aria-hidden="true"><i /></span>
           </button>
@@ -107,16 +107,11 @@
           <div v-if="!compact" class="user" :title="`${userName}（${scopeHint}）`">
             <span class="user__name">{{ userName || '…' }}</span>
           </div>
-          <!-- 主题：一个 40×40 图标按钮（显示要切到的那一套：深色下 ☀、亮色下 ☾），圆形揭开的圆心仍取按钮中心 -->
-          <button
-            class="icon-btn theme-btn"
-            :title="theme === 'dark' ? '切换到亮色' : '切换到深色'"
-            :aria-label="theme === 'dark' ? '切换到亮色' : '切换到深色'"
-            @click="switchTheme(theme === 'dark' ? 'light' : 'dark', $event.currentTarget)"
-          >
-            <svg v-if="theme === 'dark'" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="12" cy="12" r="4" /><path d="M12 2.5v2.2M12 19.3v2.2M2.5 12h2.2M19.3 12h2.2M5.3 5.3l1.6 1.6M17.1 17.1l1.6 1.6M5.3 18.7l1.6-1.6M17.1 6.9l1.6-1.6" /></g></svg>
-            <svg v-else viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M20 14.5A8 8 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" /></svg>
-          </button>
+          <!-- 主题：两段（☾ 深色 | ☀ 亮色），图标同点位 / 热力；compact（1350）只留图标、两段各 ≥ 40 px；圆形揭开圆心 = 点按的那一段 -->
+          <div class="seg seg--theme" :class="{ 'seg--icons': compact }" role="group" aria-label="主题">
+            <button :class="{ on: theme === 'dark' }" :aria-pressed="theme === 'dark'" title="深色" aria-label="深色" @click="switchTheme('dark', $event.currentTarget)"><svg class="seg__ic" viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20 14.5A8 8 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5z" /></g></svg><span v-if="!compact">深色</span></button>
+            <button :class="{ on: theme === 'light' }" :aria-pressed="theme === 'light'" title="亮色" aria-label="亮色" @click="switchTheme('light', $event.currentTarget)"><svg class="seg__ic" viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4" /><path d="M12 2.5v2.2M12 19.3v2.2M2.5 12h2.2M19.3 12h2.2M5.3 5.3l1.6 1.6M17.1 17.1l1.6 1.6M5.3 18.7l1.6-1.6M17.1 6.9l1.6-1.6" /></g></svg><span v-if="!compact">亮色</span></button>
+          </div>
           <button class="logout" title="退出登录" aria-label="退出登录" @click="logout">
             <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M10 4H5a1 1 0 0 0-1 1v14a1 1 0 0 0 1 1h5M15 8l4 4-4 4M19 12H9" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" /></svg>
             <span>退出</span>
@@ -1341,15 +1336,6 @@ onBeforeUnmount(() => {
       color: var(--dm-alarm-text);
     }
   }
-  .icon-btn {
-    color: var(--dm-text);
-    background: rgba(16, 33, 58, 0.04);
-    border-color: rgba(16, 33, 58, 0.14);
-    &:hover,
-    &:focus-visible {
-      background: rgba(16, 33, 58, 0.08);
-    }
-  }
   .tour-tg {
     background: rgba(16, 33, 58, 0.04);
     border-color: rgba(16, 33, 58, 0.14);
@@ -1845,6 +1831,23 @@ onBeforeUnmount(() => {
 .controls .seg:not(.seg--mini) button {
   height: max(40px, calc(40px / var(--ui-scale, 1))); /* 缩放后屏幕上仍 ≥ 40 px（1350 下原来只有 34） */
 }
+/* 分段按钮：图标 + 文字（图标 currentColor，随选中 / 未选中与两套主题变色） */
+.controls .seg:not(.seg--mini) button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 0 14px 0 12px;
+}
+.seg__ic {
+  flex: none;
+}
+/* 只留图标的分段（compact 下的主题）：方形 40 × 40 */
+.controls .seg.seg--icons button {
+  min-width: 0;
+  width: max(40px, calc(40px / var(--ui-scale, 1)));
+  padding: 0;
+}
 
 /* ---------- 侧栏 ---------- */
 .side {
@@ -2224,31 +2227,6 @@ onBeforeUnmount(() => {
 .map-layer.ready.tour-dip {
   opacity: 0.35;
   transition: opacity 0.15s;
-}
-/* 顶栏图标按钮（主题等）：常显边框同「退出」，40×40（缩放后屏幕上仍 ≥ 40 px） */
-.icon-btn {
-  position: relative;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: max(40px, calc(40px / var(--ui-scale, 1)));
-  height: max(40px, calc(40px / var(--ui-scale, 1)));
-  padding: 0;
-  color: #fff;
-  background: rgba(255, 255, 255, 0.06);
-  border: 1px solid var(--dm-line);
-  border-radius: 6px;
-  cursor: pointer;
-  transition: background 0.15s, border-color 0.15s;
-  &:hover,
-  &:focus-visible {
-    background: rgba(255, 255, 255, 0.12);
-    border-color: var(--dm-accent);
-  }
-  &:focus-visible {
-    outline: 2px solid var(--dm-accent);
-    outline-offset: 2px;
-  }
 }
 /* 巡航开关：图标 + 「巡航」+ 小拨杆；开 = 强调色边框 / 拨杆在右且填色，关 = 灰拨杆在左、文字降一级。常显，不靠悬停 */
 .tour-tg {
