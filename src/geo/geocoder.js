@@ -1,3 +1,5 @@
+import { loadSeedBundle } from './shared.js'
+
 // 小区级地理编码：overrides → localStorage 缓存 → 高德 Geocoder / POI 搜索（限流）
 // 只有「已确认」的结果才上地图：高德返回的名称/地址与归一化小区名一致（一方完整包含另一方；泛称/短名须完全一致，不做模糊匹配），
 // 且落在项目所属区县 adcode 内。其余一律进「待校正」（不上图）。
@@ -115,44 +117,30 @@ export function clearGeoCache() {
   localStorage.removeItem(CACHE_KEY)
 }
 
-// public/geo-overrides.json：{ "无锡市滨湖区某某小区": [lng, lat] }（GCJ-02，可在高德坐标拾取器取点）
-let overridesP = null
-export function loadOverrides() {
-  if (!overridesP) {
-    overridesP = fetch(`${import.meta.env.BASE_URL}geo-overrides.json`, { cache: 'no-cache' })
-      .then((r) => (r.ok ? r.json() : {}))
-      .catch(() => ({}))
-      .then((o) => {
-        const out = {}
-        for (const [k, v] of Object.entries(o || {})) {
-          if (!k.startsWith('_') && Array.isArray(v) && v.length === 2) out[k.replace(/\s+/g, '')] = v.map(Number)
-        }
-        return out
-      })
+// worker/data/geo-overrides.json：{ "无锡市滨湖区某某小区": [lng, lat] }（GCJ-02，可在高德坐标拾取器取点）
+// 与种子一起登录后经 Worker GET /geo-shared/seed 下发（loadSeedBundle）；改完 wrangler deploy
+export function parseOverrides(o) {
+  const out = {}
+  for (const [k, v] of Object.entries(o || {})) {
+    if (!k.startsWith('_') && Array.isArray(v) && v.length === 2) out[k.replace(/\s+/g, '')] = v.map(Number)
   }
-  return overridesP
+  return out
 }
+export const loadOverrides = () => loadSeedBundle().then((b) => parseOverrides(b?.overrides))
 
-// public/geo-seed.json：共享种子 { "区县adcode|归一化查询串": { p: [lng, lat], n: 高德名称 } | [lng, lat] | { f, ret } }，由开发环境「导出已确认坐标」生成
-let seedP = null
-export function loadSeed() {
-  if (!seedP) {
-    seedP = fetch(`${import.meta.env.BASE_URL}geo-seed.json`, { cache: 'no-cache' })
-      .then((r) => (r.ok ? r.json() : {}))
-      .catch(() => ({}))
-      .then((o) => {
-        const out = {}
-        for (const [k, v] of Object.entries(o || {})) {
-          if (k.startsWith('_')) continue
-          if (Array.isArray(v) && v.length === 2) out[k] = v.map(Number)
-          else if (v && Array.isArray(v.p)) out[k] = { p: v.p.map(Number), n: v.n || '' } // 带高德匹配名称，便于离线复核
-          else if (v && v.f) out[k] = v // 已知未确认：{ f: 原因, ret: 高德返回 }，新设备也不重复查询
-        }
-        return out
-      })
+// worker/data/geo-seed.json：共享种子 { "区县adcode|归一化查询串": { p: [lng, lat], n: 高德名称 } | [lng, lat] | { f, ret } }，
+// 由开发环境「导出已确认坐标」生成 → 覆盖 worker/data/geo-seed.json（不要放回 public/）→ wrangler deploy。登录后才下发（loadSeedBundle）。
+export function parseSeed(o) {
+  const out = {}
+  for (const [k, v] of Object.entries(o || {})) {
+    if (k.startsWith('_')) continue
+    if (Array.isArray(v) && v.length === 2) out[k] = v.map(Number)
+    else if (v && Array.isArray(v.p)) out[k] = { p: v.p.map(Number), n: v.n || '' } // 带高德匹配名称，便于离线复核
+    else if (v && v.f) out[k] = v // 已知未确认：{ f: 原因, ret: 高德返回 }，新设备也不重复查询
   }
-  return seedP
+  return out
 }
+export const loadSeed = () => loadSeedBundle().then((b) => parseSeed(b?.seed))
 export const seedKey = (district, query) => `${district || ''}|${query}`
 
 // 不访问网络的查找：override → seed → 缓存（已确认；或 7 天内的未确认结果）。
@@ -204,9 +192,9 @@ export function forgetFailures(queries) {
   saveCache()
 }
 
-// 开发用：把已确认结果导出为 geo-seed.json 格式
+// 开发用：把已确认结果导出为 worker/data/geo-seed.json 格式
 export function exportSeed(entries) {
-  const out = { _readme: '共享定位种子：key = 区县adcode|归一化查询串（市+区+小区，无户号），value = [lng, lat]（GCJ-02）。由开发环境「导出已确认坐标」生成。' }
+  const out = { _readme: '共享定位种子：key = 区县adcode|归一化查询串（市+区+小区，无户号），value = [lng, lat]（GCJ-02）。由开发环境「导出已确认坐标」生成 → 覆盖 worker/data/geo-seed.json（登录后经 /geo-shared/seed 下发，不放 public/）→ wrangler deploy。' }
   for (const [k, v] of entries.sort((a, b) => a[0].localeCompare(b[0], 'zh'))) out[k] = v
   return out
 }

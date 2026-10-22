@@ -24,3 +24,5 @@ run_worker_first = true
 # Secret（不在仓库）：AMAP_JSCODE — 高德安全密钥，经 /_AMapService 代理追加 jscode
 # Secret（不在仓库）：GEO_FC_URL — 共享坐标缓存 FC（cosyhome-dealermap-geo）触发器 URL，/geo-shared 代理到其 /geo
 #   security find-generic-password -s chitu-amap-dealermap-security -w | npx wrangler secret put AMAP_JSCODE
+# 小区坐标离线种子：worker/data/geo-seed.json + geo-overrides.json 打进 Worker 包（不在 dist/，/geo-seed.json 404），
+#   登录后 GET /geo-shared/seed 凭平台 token（转发 /me 校验）下发。重新生成：开发环境「导出已确认坐标」→ 覆盖 worker/data/geo-seed.json → wrangler deploy

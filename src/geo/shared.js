@@ -5,6 +5,24 @@ import { session } from '@/api/session'
 const URL = '/geo-shared'
 const auth = () => (session.token() ? { authorization: `Bearer ${session.token()}` } : {})
 
+// 离线坐标种子 { seed, overrides }（worker/data/*.json）：登录后经 Worker GET /geo-shared/seed 凭 token 下发（不再是公开静态文件）。
+// 失败（未登录 / 401 / 断网）→ 两者都按空处理，不阻塞地图；失败不缓存，下次调用重试。成功后整页生命周期内复用。
+let bundleP = null
+export function loadSeedBundle() {
+  if (!bundleP) {
+    bundleP = fetch(`${URL}/seed`, { headers: auth() }) // 响应 private, max-age=3600（Vary: Authorization）
+      .then((r) => {
+        if (!r.ok) throw new Error(`seed ${r.status}`)
+        return r.json()
+      })
+      .catch(() => {
+        bundleP = null
+        return { seed: {}, overrides: {} }
+      })
+  }
+  return bundleP
+}
+
 // 返回与 geo-seed.json 相同的 key 形式：{ "区县adcode|查询串": { p: [lng, lat], n, a, shared: true } }
 export async function loadShared() {
   try {

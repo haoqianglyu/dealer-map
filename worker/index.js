@@ -1,4 +1,8 @@
 // dealer-map Worker：静态 SPA + /api 只读代理（→ 平台 /v1）+ 高德安全密钥代理（/_AMapService）
+import { createSeedHandler } from './seed.js'
+import geoSeed from './data/geo-seed.json'
+import geoOverrides from './data/geo-overrides.json'
+
 const API_ORIGIN = 'https://control.cosyhome.com.cn/v1'
 
 // 只放行前端实际调用的接口（src/api/*），其余 404
@@ -131,12 +135,16 @@ async function proxyGeo(request, env) {
   return res
 }
 
+// 登录后才下发的离线坐标种子（GET /geo-shared/seed，见 worker/seed.js）
+const handleSeed = createSeedHandler({ seed: geoSeed, overrides: geoOverrides, apiOrigin: API_ORIGIN })
+
 export default {
   async fetch(request, env) {
     const url = new URL(request.url)
     if (url.pathname === '/api' || url.pathname.startsWith('/api/')) return proxyApi(request, url)
     if (url.pathname.startsWith('/_AMapService/')) return proxyAmap(request, url, env)
     if (url.pathname === '/geo-shared') return proxyGeo(request, env)
+    if (url.pathname === '/geo-shared/seed') return withHeaders(await handleSeed(request))
     if (!['GET', 'HEAD'].includes(request.method)) return notFound()
     const res = await env.ASSETS.fetch(request)
     // /assets/* 缺文件时不能走 SPA 回退返回 index.html（浏览器会把 HTML 当 JS 缓存，页面白屏）

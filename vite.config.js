@@ -2,6 +2,24 @@ import { defineConfig, loadEnv } from 'vite'
 import vue from '@vitejs/plugin-vue'
 import { fileURLToPath, URL } from 'node:url'
 import https from 'node:https'
+import { readFileSync } from 'node:fs'
+
+// 开发：模拟 Worker GET /geo-shared/seed（生产由 worker/seed.js 校验平台 token；这里只要求带 Bearer）
+const devSeed = () => ({
+  name: 'dev-geo-seed',
+  configureServer(server) {
+    server.middlewares.use('/geo-shared/seed', (req, res) => {
+      const read = (f) => JSON.parse(readFileSync(new URL(`./worker/data/${f}`, import.meta.url), 'utf8'))
+      if (!/^Bearer\s+\S{10,}$/i.test(req.headers.authorization || '')) {
+        res.statusCode = 401
+        return res.end('{"error":"unauthorized"}')
+      }
+      res.setHeader('content-type', 'application/json; charset=utf-8')
+      res.setHeader('Cache-Control', 'private, max-age=3600')
+      res.end(JSON.stringify({ seed: read('geo-seed.json'), overrides: read('geo-overrides.json') }))
+    })
+  },
+})
 
 // 开发代理到平台：本机到 106.14.238.28 丢包严重——部分新建连接 SYN 无回应、部分已建连接上请求 10–40 s 无响应，直连 curl / node 一样，
 // 不是代码问题；生产走 Worker 不受影响。这里每个请求原本都可能新建连接撞上它 → 60 s 超时 →「告警加载失败」。
@@ -40,7 +58,7 @@ const upstreamAgent = new RetryAgent({ keepAlive: true })
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '')
   return {
-  plugins: [vue()],
+  plugins: [vue(), devSeed()],
   resolve: {
     alias: { '@': fileURLToPath(new URL('./src', import.meta.url)) },
   },
