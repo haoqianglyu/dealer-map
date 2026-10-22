@@ -1,11 +1,12 @@
 // v-marquee：单行文字放不下时横向滚动（代替省略号）。只对真的溢出的行生效。
-// 节奏：停 2.5 s → 约 32 px/s 左移到末尾 → 停 2.5 s → 淡出回到开头 → 循环；各行错开起始时间（8 档 × 1.2 s），同屏同时在动的行少。
+// 节奏：停 1.5 s → 约 32 px/s 左移到末尾 → 停 2.5 s → 淡出回到开头 → 循环；各行错开起始时间（8 档 × 1.2 s），同屏同时在动的行少。
 // 只有在视口里（含滚动容器裁切）的行才动（IntersectionObserver），滚出视野的行暂停。
 // 悬停/聚焦所在行时暂停；prefers-reduced-motion 时不滚动（保留省略号）。只动 transform/opacity（GPU 合成，不触发布局）。
 // 用法：<span class="x" v-marquee><span>文字</span></span>（外层 overflow:hidden; 内层 inline-block）；
 // 非 Vue 渲染的 HTML（高德弹窗）用 mountMarquee(el) / 返回的清理函数。
 const SPEED = 32 // px/s
-const PAUSE = 2500
+const START_PAUSE = 1500 // 开始滚动前的停顿
+const END_PAUSE = 2500 // 滚到末尾后的停顿
 const FADE = 350
 const reduce = typeof matchMedia === 'function' ? matchMedia('(prefers-reduced-motion: reduce)') : { matches: false }
 let seq = 0
@@ -48,17 +49,17 @@ function setup(el) {
   el.classList.add('mq')
   const d = dist + 14 // 末尾多走一点，越过右侧渐隐区
   const scroll = (d / SPEED) * 1000
-  const total = PAUSE + scroll + PAUSE + FADE * 2
+  const total = START_PAUSE + scroll + END_PAUSE + FADE * 2
   const o = (t) => t / total
   const x = (v) => `translateX(${v}px)`
   st.anim = inner.animate(
     [
       { transform: x(0), opacity: 1, offset: 0 },
-      { transform: x(0), opacity: 1, offset: o(PAUSE) },
-      { transform: x(-d), opacity: 1, offset: o(PAUSE + scroll) },
-      { transform: x(-d), opacity: 1, offset: o(PAUSE * 2 + scroll) },
-      { transform: x(-d), opacity: 0, offset: o(PAUSE * 2 + scroll + FADE) },
-      { transform: x(0), opacity: 0, offset: o(PAUSE * 2 + scroll + FADE) },
+      { transform: x(0), opacity: 1, offset: o(START_PAUSE) },
+      { transform: x(-d), opacity: 1, offset: o(START_PAUSE + scroll) },
+      { transform: x(-d), opacity: 1, offset: o(START_PAUSE + END_PAUSE + scroll) },
+      { transform: x(-d), opacity: 0, offset: o(START_PAUSE + END_PAUSE + scroll + FADE) },
+      { transform: x(0), opacity: 0, offset: o(START_PAUSE + END_PAUSE + scroll + FADE) },
       { transform: x(0), opacity: 1, offset: 1 },
     ],
     { duration: total, iterations: Infinity, delay: (seq++ % 8) * 1200 }
