@@ -99,7 +99,7 @@
       <div class="legend">
         <template v-if="mode === 'markers'">
           <span v-for="(st, k) in STATES" :key="k"><i class="dot" :style="{ '--c': st.color }" />{{ st.label }}</span>
-          <span class="help" tabindex="0" aria-label="说明">?<em>只显示已确认位置的小区；缩放到 12 级以上显示小区，14 级以上显示小区名</em></span>
+          <span class="help" :class="{ open: helpOpen }" tabindex="0" role="button" aria-label="说明" @click="helpOpen = !helpOpen" @blur="helpOpen = false" @keydown.enter.prevent="helpOpen = !helpOpen">?<em>只显示已确认位置的小区；缩放到 12 级以上显示小区，14 级以上显示小区名</em></span>
         </template>
         <template v-else>
           <span class="heat-title">{{ heatMetric === 'alarms' ? '亮度 = 一级告警数（10 天）' : '亮度 = 小区内项目数' }}</span>
@@ -139,13 +139,13 @@
               v-for="a in alarmFeed"
               :key="a.id"
               :class="{ on: a.active, fresh: a.fresh, off: !a.located }"
-              :title="a.located ? `${fmtAbs(a.ts)} · 点击定位到小区` : `${fmtAbs(a.ts)} · 该小区尚未定位`"
+              :title="a.located ? `${fmtAbs(a.ts)} · 点击定位到小区` : undefined"
               :tabindex="a.located ? 0 : -1"
               @click="focusAlarm(a)"
               @keydown.enter.prevent="focusAlarm(a)"
             >
               <span class="l1"><b class="name">{{ a.label }}</b><small>{{ a.district }}</small><span class="t">{{ fmtRel(a.ts) }}</span></span>
-              <span class="l2"><span class="meta">{{ a.device }} · {{ a.content }}</span><em v-if="!a.active" class="tag">{{ a.status === 1 ? '已恢复' : '已处理' }}</em></span>
+              <span class="l2"><span v-marquee class="meta"><span>{{ a.device }} · {{ a.content }}</span></span><em v-if="!a.active" class="tag">{{ a.status === 1 ? '已恢复' : '已处理' }}</em><button v-if="!a.located" class="unloc" type="button" title="该小区尚未定位，点击查看项目详情" @click.stop="openProject(a.projectId)">未定位</button></span>
               <i class="chev" aria-hidden="true">›</i>
             </li>
           </ul>
@@ -218,6 +218,9 @@ import { regionInfo } from '@/utils/region'
 import { STATES, applyStates, alarmStates, isActiveAlarm } from '@/geo/states'
 import { fmtNumber, fmtArea } from '@/utils/format'
 import { tooltipStyle, categoryAxis, valueAxis } from '@/utils/chartTheme'
+import { vMarquee } from '@/directives/marquee'
+
+const helpOpen = ref(false) // 图例「?」点按/遥控确认键展开（电视无悬停）
 
 defineOptions({ name: 'DealerMap' })
 // 屏幕适配：地图本身铺满视口、不缩放；叠加界面放在一个透明层里，与详情页用同一个比例缩放
@@ -999,35 +1002,28 @@ onBeforeUnmount(() => {
   }
 }
 .logout {
+  /* 始终展开（图标 + 「退出」+ 边框）：大屏在电视上，没有悬停 */
   display: flex;
   align-items: center;
-  gap: 0;
+  gap: 6px;
   height: 30px;
-  padding: 0 7px;
+  padding: 0 10px 0 8px;
   font: inherit;
   font-size: 13px;
-  color: var(--dm-text-3);
-  background: transparent;
-  border: 1px solid transparent;
+  color: #fff;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid var(--dm-line);
   border-radius: 6px;
   cursor: pointer;
-  transition: color 0.15s, background 0.15s, border-color 0.15s;
+  transition: background 0.15s, border-color 0.15s;
   span {
-    max-width: 0;
-    overflow: hidden;
     white-space: nowrap;
-    transition: max-width 0.2s, margin 0.2s;
   }
   &:hover,
   &:focus-visible {
-    color: #fff;
-    background: rgba(255, 255, 255, 0.06);
-    border-color: var(--dm-line);
+    background: rgba(255, 255, 255, 0.12);
+    border-color: var(--dm-accent);
     outline: none;
-    span {
-      max-width: 40px;
-      margin-left: 6px;
-    }
   }
 }
 
@@ -1137,7 +1133,7 @@ onBeforeUnmount(() => {
       transition: opacity 0.15s;
     }
     &:hover em,
-    &:focus em {
+    &.open em {
       opacity: 1;
     }
   }
@@ -1380,6 +1376,38 @@ onBeforeUnmount(() => {
     text-overflow: ellipsis;
     font-size: 12px;
     color: var(--dm-text-3);
+    > span {
+      display: inline;
+    }
+    /* 溢出时横向滚动（v-marquee），两端柔和渐隐 */
+    &.mq {
+      text-overflow: clip;
+      -webkit-mask-image: linear-gradient(90deg, transparent 0, #000 8px, #000 calc(100% - 14px), transparent);
+      mask-image: linear-gradient(90deg, transparent 0, #000 8px, #000 calc(100% - 14px), transparent);
+      > span {
+        display: inline-block;
+        padding-left: 4px;
+        will-change: transform;
+      }
+    }
+  }
+  .unloc {
+    flex: none;
+    height: 18px;
+    padding: 0 6px;
+    font: inherit;
+    font-size: 11px;
+    line-height: 16px;
+    color: #ffc722;
+    background: rgba(255, 199, 34, 0.1);
+    border: 1px solid rgba(255, 199, 34, 0.45);
+    border-radius: 3px;
+    cursor: pointer;
+    &:hover,
+    &:focus-visible {
+      background: rgba(255, 199, 34, 0.2);
+      outline: none;
+    }
   }
   .tag {
     flex: none;

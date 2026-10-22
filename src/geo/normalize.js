@@ -12,7 +12,7 @@ const TAIL_RE = /(地下室|办公室|样板间|样板房|展厅|自建别墅|�
 const UNIT_TAIL_RE = /[A-Za-z#＃]+(?:号楼|[号栋幢座])$/
 // 只剩分期/分区（「B区」「东二区」「三期」「第三期」「B区三期」）不是小区名
 const PHASE_ONLY_RE = new RegExp(`^(?:第?[东西南北中]?(?:[A-Za-z]|[${CN_NUM}]+)?[区期])+$`)
-// 多行地址里只有省市区县的行（「无锡市滨湖区」）跳过，取下一行的小区名；分期/分区（「华府庄园八区」）不算
+// 多行地址里只有省市区县的行（「无锡市滨湖区」「苏州市吴中区」）跳过，取下一行的小区名；不带省/市的分期/分区（「华府庄园八区」）不算
 const ADMIN_LINE_RE = /^(?:[\u4e00-\u9fa5]{1,6}?(?:省|自治区|市))*(?:[\u4e00-\u9fa5]{1,6}?(?:市|县|区))?$/
 const PHASE_END_RE = new RegExp(`(?:[A-Za-z东西南北中]|[${CN_NUM}])区$`)
 // 项目名里常混入的系统/产品/用途词（不是小区名的一部分）
@@ -40,7 +40,7 @@ export function communityName(raw) {
   for (const line of lines) {
     const c = lineCommunity(line)
     if (!c) continue
-    if (lines.length > 1 && ADMIN_LINE_RE.test(c) && !PHASE_END_RE.test(c)) {
+    if (lines.length > 1 && ADMIN_LINE_RE.test(c) && (/[省市]/.test(c) || !PHASE_END_RE.test(c))) {
       adminOnly ||= c
       continue
     }
