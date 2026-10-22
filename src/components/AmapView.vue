@@ -597,6 +597,9 @@ function onItemTap(it) {
   openGroup(it)
 }
 function openGroup(it, focusKey = null) {
+  openPopover(groupContent(it, focusKey))
+}
+function groupContent(it, focusKey = null) {
   const members = membersOf(indexes, it)
   const dists = [...new Set(members.map((m) => m.districtName).filter(Boolean))]
   // 兜底：同名的成员（归一化没能合并的同一个小区）并成一组，组头不会出现两个「湖玺庄园」
@@ -610,7 +613,7 @@ function openGroup(it, focusKey = null) {
     }
   }
   const groups = [...byLabel.values()]
-  openPopover({
+  return {
     key: it.id,
     lnglat: it.lnglat,
     label: groups.length > 1 ? `${it.top} 等 ${groups.length} 小区` : groups[0]?.label || it.top,
@@ -618,7 +621,19 @@ function openGroup(it, focusKey = null) {
     projects: members.flatMap((m) => m.projects),
     groups,
     focusKey,
-  })
+    memberKeys: members.map((m) => m.key).sort().join('\n'),
+  }
+}
+// 索引重建后（加载中新小区刚定位、并进了打开着的终态簇）：按新成员重绘分组弹窗，保留展开状态
+function refreshGroupPopover() {
+  if (!pop?.c?.groups || level !== 'terminal') return // 只在终态级（缩小后的簇不是同一个分组）
+  const old = pop.c.memberKeys.split('\n')
+  const it = lastItems.find((i) => i.clusterId != null && membersOf(indexes, i).some((m) => old.includes(m.key)))
+  if (!it) return
+  const c = groupContent(it, pop.c.focusKey)
+  if (c.memberKeys === pop.c.memberKeys) return
+  pop.c = c
+  openPopover(c, true)
 }
 
 // 上一帧的视图（决定动画方向）：{ level, zq, items }
@@ -879,6 +894,7 @@ watch(
       if (!map) return
       rebuildIndexes()
       render(false)
+      refreshGroupPopover()
     }, 300)
   }
 )

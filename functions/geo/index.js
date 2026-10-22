@@ -105,6 +105,8 @@ function limited(id) {
 }
 
 // ---------------------------------------------------------------- 校验
+// 户号：# 号，或「数字（阿拉伯 / 中文 / 字母楼号）+ 栋/幢/座/号楼/单元/室/层」；单个「元」「室」等字不算（「天元世家」「兰室」是小区名）
+const UNIT_RE = /[#＃]|[0-9０-９A-Za-z一二三四五六七八九十百零〇两壹贰叁肆伍陆柒捌玖拾]+\s*(?:栋|幢|座|号楼|单元|室|层)/;
 const clean = (s, n) => String(s == null ? '' : s).replace(/[\u0000-\u001f]/g, '').trim().slice(0, n);
 function validate(b) {
   if (!b || typeof b !== 'object') return 'bad body';
@@ -113,7 +115,7 @@ function validate(b) {
   const lng = Number(b.lng), lat = Number(b.lat);
   if (!key || key.length > 64) return 'bad key';
   if (/\d/.test(key)) return 'key must not contain digits'; // 归一化小区名里不会有楼栋/户号数字
-  if (/[#＃栋幢单元室层]/.test(key)) return 'key looks like a unit address';
+  if (UNIT_RE.test(key)) return 'key looks like a unit address';
   if (!/^\d{6}$/.test(adcode)) return 'bad adcode';
   if (!Number.isFinite(lng) || !Number.isFinite(lat) || lng < 73.4 || lng > 135.2 || lat < 18 || lat > 53.7) return 'outside China';
   const c = CENTERS[adcode] || CENTERS[adcode.slice(0, 4) + '00'];

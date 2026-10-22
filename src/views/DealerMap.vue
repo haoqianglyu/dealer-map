@@ -188,7 +188,7 @@
 </template>
 
 <script setup>
-import { ref, shallowRef, computed, reactive, watch, onMounted, onBeforeUnmount } from 'vue'
+import { ref, shallowRef, computed, reactive, watch, onMounted, onBeforeUnmount, nextTick } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import TechPanel from '@/components/TechPanel.vue'
 import CityPicker from '@/components/CityPicker.vue'
@@ -474,16 +474,20 @@ const projectGroup = computed(() => {
 })
 const alarmJoined = computed(() => alarms.value.filter((a) => projectGroup.value.has(a.projectId)))
 const activeAlarmCount = computed(() => alarmJoined.value.filter(isActiveAlarm).length)
-const alarmFeed = computed(() =>
-  [...alarmJoined.value]
-    .sort((a, b) => isActiveAlarm(b) - isActiveAlarm(a) || b.ts - a.ts)
-    .slice(0, 100)
-    .map((a) => {
-      const g = projectGroup.value.get(a.projectId)
-      const active = isActiveAlarm(a)
-      return { ...a, text: alarmText(a.device, a.content), active, fresh: active && Date.now() - a.ts < 3600e3, key: g.key, label: g.community || '未识别小区', district: g.districtName, located: Boolean(geoResults[g.key]?.lnglat) }
-    })
-)
+const FEED_LIMIT = 100
+const alarmSorted = computed(() => [...alarmJoined.value].sort((a, b) => isActiveAlarm(b) - isActiveAlarm(a) || b.ts - a.ts))
+const feedRow = (a) => {
+  const g = projectGroup.value.get(a.projectId)
+  const active = isActiveAlarm(a)
+  return { ...a, text: alarmText(a.device, a.content), active, fresh: active && Date.now() - a.ts < 3600e3, key: g.key, label: g.community || '未识别小区', district: g.districtName, located: Boolean(geoResults[g.key]?.lnglat) }
+}
+// 列表只渲染前 100 条；点区县气泡要找的未定位告警排在 100 名外时，把它追加到末尾（pinnedAlarmId）
+const pinnedAlarmId = ref(null)
+const alarmFeed = computed(() => {
+  const top = alarmSorted.value.slice(0, FEED_LIMIT)
+  const pin = pinnedAlarmId.value != null && alarmSorted.value.slice(FEED_LIMIT).find((a) => a.id === pinnedAlarmId.value)
+  return (pin ? [...top, pin] : top).map(feedRow)
+})
 const z2 = (n) => String(n).padStart(2, '0')
 const fmtAbs = (ms) => {
   const d = new Date(ms)
@@ -512,11 +516,21 @@ function tapAlarm(a) {
 const feedEl = ref(null)
 const flashId = ref(null)
 let flashTimer = 0
-function revealUnlocated(d) {
+async function revealUnlocated(d) {
   if (!d?.unlocatedAlarms) return
-  const a = alarmFeed.value.find((x) => !x.located && x.active && x.district === d.label) || alarmFeed.value.find((x) => !x.located && x.district === d.label)
+  // 在全部告警（不只是渲染的前 100 条）里找：同排序，进行中优先
+  const unloc = (x) => {
+    const g = projectGroup.value.get(x.projectId)
+    return g.districtName === d.label && !geoResults[g.key]?.lnglat
+  }
+  const a = alarmSorted.value.find((x) => unloc(x) && isActiveAlarm(x)) || alarmSorted.value.find(unloc)
+  if (!a || !feedEl.value) return
+  if (!alarmFeed.value.some((x) => x.id === a.id)) {
+    pinnedAlarmId.value = a.id
+    await nextTick()
+  }
   const ul = feedEl.value
-  if (!a || !ul) return
+  if (!ul) return
   const li = ul.querySelector(`[data-aid="${CSS.escape(String(a.id))}"]`)
   if (li) ul.scrollTo({ top: Math.max(0, li.offsetTop - ul.clientHeight / 2 + li.offsetHeight / 2), behavior: 'smooth' })
   flashId.value = a.id
