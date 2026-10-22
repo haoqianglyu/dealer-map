@@ -50,6 +50,12 @@ export function createWarmLights(AMap, map) {
   let visible = false
   let raf = 0
 
+  // 高德把 canvas 包在带 z-index 的 .amap-layer 里（独立层叠上下文），只给 canvas 设 multiply 只会和透明的父层相乘；
+  // 所以父层也设（父层与瓦片 canvas 同在 .amap-layers 内，真正乘到底图上）。父层在首次渲染时才挂上，draw 里补一次
+  const blendEl = () => {
+    const v = MODE[paletteName].blend === 'multiply' ? 'multiply' : ''
+    for (const el of [canvas, canvas.parentElement]) if (el && el.style.mixBlendMode !== v) el.style.mixBlendMode = v
+  }
   const fit = (cv, w, h, dpr) => {
     if (cv.width !== w * dpr || cv.height !== h * dpr) {
       cv.width = w * dpr
@@ -71,6 +77,7 @@ export function createWarmLights(AMap, map) {
     const h = size.height
     const mode = MODE[paletteName] || GLOW
     const ink = mode.blend === 'multiply'
+    blendEl()
     const ctx = fit(canvas, w, h, dpr)
     const lctx = ink ? fit(labelCanvas, w, h, dpr) : null
     if (!ink && labelCanvas.width) {
@@ -155,7 +162,7 @@ export function createWarmLights(AMap, map) {
       paletteName = PALETTES[name] ? name : 'gold'
       palette = PALETTES[paletteName]
       // 元素层混合：亮色 multiply 到底图（canvas 内部的 composite 管不到瓦片）；深色 normal（原样）
-      canvas.style.mixBlendMode = MODE[paletteName].blend === 'multiply' ? 'multiply' : ''
+      blendEl()
       syncLabel()
       schedule()
     },
