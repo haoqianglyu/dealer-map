@@ -1585,6 +1585,11 @@ onBeforeUnmount(() => {
   }
 }
 
+/* 顶栏分段按钮 36 → 40 px（电视点按目标；年 / 月 迷你分段不变） */
+.controls .seg:not(.seg--mini) button {
+  height: 40px;
+}
+
 /* ---------- 侧栏 ---------- */
 .side {
   position: absolute;

@@ -452,9 +452,15 @@ function renderLabels() {
   // 城市名只画在附近没有区县气泡的城市（有气泡的城市由区县名说明位置，避免压字）
   const near = (a, b) => Math.abs(a[0] - b[0]) < 0.2 && Math.abs(a[1] - b[1]) < 0.15
   const { width } = map.getSize()
+  const { height } = map.getSize()
   const inUi = (ll) => {
     const p = map.lngLatToContainer(ll)
     return p.y < props.avoid.top || p.x > width - props.avoid.right
+  }
+  // 只画视野内（外扩 100 px）的：视野外的城市名（成都 / 重庆 / 莆田…）不建 DOM；平移时 onMove 会重画
+  const inView = (ll) => {
+    const p = map.lngLatToContainer(ll)
+    return p.x > -100 && p.y > -100 && p.x < width + 100 && p.y < height + 100
   }
   // 有项目的城市 + 长三角邻近城市（静态表，补远景方位感）；同名只画一次
   const seen = new Set()
@@ -464,14 +470,14 @@ function renderLabels() {
       const n = c.name.replace(/市$/, '')
       if (seen.has(n)) return false
       seen.add(n)
-      return !props.districts.some((d) => near(d.lnglat, c.lnglat)) && !inUi(c.lnglat)
+      return inView(c.lnglat) && !props.districts.some((d) => near(d.lnglat, c.lnglat)) && !inUi(c.lnglat)
     })
     .map((c) => new AMap.Marker({ position: c.lnglat, anchor: 'center', content: `<div class="dm-city${c.ctx ? ' dm-city--ctx' : ''}">${esc(c.name)}</div>`, zIndex: 100, bubble: true, clickable: false }))
   if (props.mode === 'heat') {
     const metric = props.heatMetric
     for (const d of props.districts) {
       const n = metric === 'alarms' ? d.projects.reduce((s, p) => s + (p.alarms || []).filter((a) => a.level === 1).length, 0) : d.projects.length
-      if (!n) continue
+      if (!n || !inView(d.lnglat)) continue
       labels.push(
         new AMap.Marker({
           position: d.lnglat,
@@ -827,10 +833,13 @@ function renderMarkers(animate = true) {
   if (import.meta.env.DEV) window.__dmPerf = { ms: +(performance.now() - t0).toFixed(1), layout: +(t1 - t0).toFixed(1), items: items.length, anim: anim?.kind || null }
 }
 
-// 底图要素：远景只留底色 + 道路（地名由我们画，避免同名两份）；≥ 12 级加建筑与注记（区县 / 道路 / POI 名，由高德画）
+// 底图要素按级别四档（docs/fable-review-round5.md 第 6 条）：
+//   ① 区县：底色 + 道路（地名由我们画，避免同名两份）；
+//   ② 街区簇（z12–13）：加建筑、不要注记 —— 簇不靠地名定位，高德 POI 名（商场 / 学校 / 景点…）和「k 小区」一样亮，会把簇淹掉；
+//   ③④ 小区胶囊 / 终态：全开（小区名在胶囊里，与 POI 分工已成立）。热力在区县级以下同 ②
 let featuresNow = ''
 function applyFeatures() {
-  const f = level === 'district' ? ['bg', 'road'] : ['bg', 'road', 'building', 'point']
+  const f = level === 'district' ? ['bg', 'road'] : level === 'cluster' || props.mode === 'heat' ? ['bg', 'road', 'building'] : ['bg', 'road', 'building', 'point']
   if (f.join() === featuresNow) return
   featuresNow = f.join()
   map.setFeatures(f)
@@ -1156,6 +1165,9 @@ onBeforeUnmount(() => {
   left: 24px !important;
   bottom: var(--dm-scale-bottom, 90px) !important;
   background: transparent !important;
+  /* 随界面比例放大（2560 下仍 12 px 太小）；左下为原点，位置不变 */
+  transform: scale(var(--k, 1));
+  transform-origin: left bottom;
 }
 .amap .amap-scale-text {
   font: 11px var(--dm-num) !important;
