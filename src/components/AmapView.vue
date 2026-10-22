@@ -161,11 +161,44 @@ function onPopOver(e) {
 function onPopOut(e) {
   if (inPop(e.target) && !inPop(e.relatedTarget) && map) map.setStatus({ scrollWheel: true, dragEnable: true, doubleClickZoom: true })
 }
-// 弹窗被顶栏 / 侧栏 / 图例挡住时平移地图
+// 弹窗被顶栏 / 侧栏 / 图例挡住时平移地图：一次 ~250 ms 缓出，只平移刚好露出弹窗的距离（+12px 间隙）。
+// 平移进行中再次检查（展开告警 / 更多后弹窗变高）时，以「这次平移的终点」为基准合并成同一段动画，不叠加、不二次漂移。
+const PAN_MS = 250
+let panGoal = null // { ll, until }：进行中的快速平移的目标中心
+let panRaf = 0
+function goalShift() {
+  if (!panGoal || performance.now() > panGoal.until) return [0, 0]
+  const p = map.lngLatToContainer(panGoal.ll)
+  const { width, height } = map.getSize()
+  return [width / 2 - p.x, height / 2 - p.y] // 平移结束时屏幕内容还会再移动的距离
+}
+function quickPan(dx, dy) {
+  const [sx, sy] = goalShift()
+  const { width, height } = map.getSize()
+  const ll = map.containerToLngLat(new props.AMap.Pixel(width / 2 - sx - dx, height / 2 - sy - dy))
+  panGoal = { ll, until: performance.now() + PAN_MS + 60 }
+  // 自己补间（高德 setCenter 的时长动画接近匀速）：ease-out cubic，每帧瞬时设中心
+  const from = map.getCenter()
+  const t0 = performance.now()
+  cancelAnimationFrame(panRaf)
+  const step = (t) => {
+    if (!map) return
+    const k = Math.min(1, (t - t0) / PAN_MS)
+    const e = 1 - Math.pow(1 - k, 3)
+    map.setCenter([from.lng + (ll.lng - from.lng) * e, from.lat + (ll.lat - from.lat) * e], true)
+    if (k < 1) panRaf = requestAnimationFrame(step)
+  }
+  panRaf = requestAnimationFrame(step)
+}
 function avoidUi() {
   const p = el.value?.querySelector('.dm-pop')
   if (!p || !map) return
-  const r = p.getBoundingClientRect()
+  // 弹窗有 0.16 s 的放大入场动画（transform 以底边中点为原点）：用布局尺寸还原最终矩形，避免少平移几像素
+  const b = p.getBoundingClientRect()
+  const [sx, sy] = goalShift()
+  const cx = (b.left + b.right) / 2 + sx
+  const bottom = b.bottom + sy
+  const r = { left: cx - p.offsetWidth / 2, right: cx + p.offsetWidth / 2, top: bottom - p.offsetHeight, bottom }
   const box = el.value.getBoundingClientRect()
   const a = props.avoid
   let dx = 0
@@ -174,7 +207,7 @@ function avoidUi() {
   if (r.left + dx < box.left + a.left) dx = box.left + a.left - r.left + 12
   if (r.top < box.top + a.top) dy = box.top + a.top - r.top + 12
   else if (r.bottom > box.bottom - a.bottom) dy = box.bottom - a.bottom - r.bottom - 12
-  if (dx || dy) map.panBy(dx, dy)
+  if (Math.abs(dx) >= 1 || Math.abs(dy) >= 1) quickPan(dx, dy)
 }
 
 // [上, 右, 下, 左] 视野留白（避开界面）
@@ -352,6 +385,11 @@ function onZoom() {
 
 // × 用 pointerdown 直接关闭（捕获阶段，高德 InfoWindow 内部吞掉 click 时也可靠）
 function onPopDown(e) {
+  if (!inPop(e.target)) {
+    // 用户开始拖动 / 点地图：停掉进行中的快速平移，不与手势抢视野
+    cancelAnimationFrame(panRaf)
+    panGoal = null
+  }
   const t = e.target.closest && e.target.closest('[data-act="close"]')
   if (!t) return
   e.stopPropagation()
@@ -438,8 +476,12 @@ watch(
 function focusCommunity(key) {
   const c = props.communities.find((x) => x.key === key)
   if (!c || !map || props.mode === 'heat') return
+  // 一步到位（不再慢慢平移让出侧栏）：之后若弹窗仍被挡，avoidUi 只做一次 250 ms 的快速平移
   map.setZoomAndCenter(Math.max(15, map.getZoom()), c.lnglat, true)
-  map.panBy(-(props.avoid.right - props.avoid.left) / 2, 0)
+  const { width, height } = map.getSize()
+  map.setCenter(map.containerToLngLat(new props.AMap.Pixel(width / 2 + (props.avoid.right - props.avoid.left) / 2, height / 2)), true)
+  cancelAnimationFrame(panRaf)
+  panGoal = null
   onZoom()
   openPopover(c)
 }
@@ -473,6 +515,7 @@ onActivated(() =>
 )
 
 onBeforeUnmount(() => {
+  cancelAnimationFrame(panRaf)
   if (map) {
     heat && heat.destroy()
     map.off('zoomend', onZoom)
