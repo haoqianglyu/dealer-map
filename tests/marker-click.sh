@@ -31,9 +31,11 @@ echo "cluster level: clusters $nc, named capsules $named"
 k=$(mkxy '.dm-mk--cluster' '')
 echo "cluster at: $k"
 [ -n "$k" ] && [ "$k" != "null" ] || exit 1
-z0=$(ab eval 'window.__dmMap.getZoom()' | tr -d '"')
+# 缩放级别：开发环境读 __dmMap；生产没有这个全局，用比例尺长度的负对数代替（放大 → 比例尺米数变小 → 值变大）
+zoom() { ab eval 'window.__dmMap ? window.__dmMap.getZoom() : (()=>{const t=document.querySelector(".amap-scale-text")?.innerText||"";const v=parseFloat(t)*(/公里|km/.test(t)?1000:1);const w=document.querySelector(".amap-scale-line")?.getBoundingClientRect().width||1;return -Math.log2(v/w)})()' | tr -d '"'; }
+z0=$(zoom)
 tap "$k"; sleep 1.5
-z1=$(ab eval 'window.__dmMap.getZoom()' | tr -d '"')
+z1=$(zoom)
 echo "after cluster tap: zoom $z0 → $z1"
 awk "BEGIN{exit !($z1 > $z0)}" || exit 1
 echo PASS-CLUSTER
