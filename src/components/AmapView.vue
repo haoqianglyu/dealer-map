@@ -91,10 +91,8 @@ function districtLabelSides(ds, fit) {
     const p = map.lngLatToContainer(d.lnglat)
     const r = (Math.max(36, Math.round(districtSize(d) * fit)) * K) / 2
     const total = alarmCount(d.projects)
-    const unloc = alarmCount(d.unlocatedProjects || [])
-    const bw = total ? (textWidth(unloc ? '4 个未定位' : `${total} 告警`, unloc ? 11 : 12) + 14) * K : 0
-    const bh = (unloc ? 34 : 20) * K
-    const badge = total ? { l: p.x + r - 12 * K, r: p.x + r - 12 * K + bw, t: p.y - r - (unloc ? 24 : 9) * K, b: p.y - r - (unloc ? 24 : 9) * K + bh } : null
+    const bw = total ? (textWidth(`${total} 告警`, 12) + 14) * K : 0
+    const badge = total ? { l: p.x + r - 12 * K, r: p.x + r - 12 * K + bw, t: p.y - r - 9 * K, b: p.y - r + 11 * K } : null
     return { x: p.x, y: p.y, r, badge, w: textWidth(d.label, 13) * K + 4, h: 18 * K }
   })
   const blocks = geo.flatMap((g, i) => [{ i, l: g.x - g.r, r: g.x + g.r, t: g.y - g.r, b: g.y + g.r }, ...(g.badge ? [{ i, ...g.badge }] : [])])
@@ -132,13 +130,10 @@ function districtHtml(d, fit = 1, side = 'below') {
   const state = worstState(d.projects)
   const size = Math.max(36, Math.round(districtSize(d) * fit))
   const cls = ['dm-mk', `dm-mk--${state}`, 'dm-mk--district', count >= 1000 ? 'dm-mk--big' : '', hasNewAlarm(d.projects) ? 'dm-mk--pulse' : ''].join(' ')
-  // 告警里有一部分在未定位的小区（放大后地图上找不到）：角标第二行写明「1 个未定位」/「均未定位」（两行窄角标，
-  // 不比单行宽多少，远景区县圈挤在一起时不横向压到邻圈）；入口在告警列表（点区县会滚到那条并闪一下）
-  const total = alarmCount(d.projects)
-  const unloc = alarmCount(d.unlocatedProjects || [])
-  const badge = total && unloc ? `<span class="dm-mk__badge dm-mk__badge--2">${fmtNumber(total)} 告警<em>${total === unloc ? '均' : `${fmtNumber(unloc)} 个`}未定位</em></span>` : badgeHtml(total)
+  // 角标只写「N 告警」（N = 该区全部进行中 1 级告警，含未定位小区的）；未定位不在圈上标，
+  // 入口在告警列表（行内「未定位」标签 → 项目详情；点区县会滚到那条并闪一下）
   return hitBox(`<div class="${cls}" style="--size:${size}px;--c:${STATES[state].color}">
-    <span class="dm-mk__n">${fmtNumber(count)}</span>${badge}
+    <span class="dm-mk__n">${fmtNumber(count)}</span>${badgeHtml(alarmCount(d.projects))}
     <span class="dm-mk__label${side !== 'below' ? ` dm-mk__label--${side}` : ''}">${esc(d.label)}</span>
   </div>`)
 }
@@ -1065,7 +1060,7 @@ onBeforeUnmount(() => {
 }
 .dm-mk__badge {
   position: absolute;
-  top: -9px;
+  top: calc(-9px * var(--k, 1));
   left: calc(100% - calc(12px * var(--k, 1)));
   height: calc(20px * var(--k, 1));
   padding: 0 calc(7px * var(--k, 1));
@@ -1075,21 +1070,6 @@ onBeforeUnmount(() => {
   background: #ff4d4f;
   border-radius: calc(10px * var(--k, 1));
   box-shadow: 0 calc(2px * var(--k, 1)) calc(6px * var(--k, 1)) rgba(0, 0, 0, 0.4);
-}
-.dm-mk__badge--2 {
-  top: calc(-24px * var(--k, 1));
-  height: auto;
-  padding: calc(2px * var(--k, 1)) calc(7px * var(--k, 1)) calc(3px * var(--k, 1));
-  line-height: calc(16px * var(--k, 1));
-  text-align: center;
-}
-.dm-mk__badge em {
-  display: block;
-  font-style: normal;
-  font-weight: 500;
-  font-size: calc(11px * var(--k, 1));
-  line-height: calc(13px * var(--k, 1));
-  color: #ffe6b3;
 }
 .dm-mk:not(.dm-mk--district) .dm-mk__badge {
   top: -8px;
