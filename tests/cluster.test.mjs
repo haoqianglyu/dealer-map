@@ -111,3 +111,32 @@ test('标签避让：簇级只给多小区簇标「k 小区」，撞圈不标；
   const l3 = layoutLabels([caps[0], { ...caps[1], x: 140, y: 100 }], 'named')
   assert.equal(l3.get('X').named || l3.get('Y').named, false)
 })
+
+test('区县放大：主体框丢掉远处离群点，集中时不误杀', async () => {
+  const { mainMass } = await import('../src/geo/cluster.js')
+  const core = Array.from({ length: 30 }, (_, i) => [120.28 + (i % 6) * 0.01, 31.52 + Math.floor(i / 6) * 0.008])
+  const far = [[120.3, 31.2], [120.05, 31.55]]
+  const kept = mainMass([...core, ...far])
+  assert.ok(kept.every((p) => p[1] > 31.4 && p[0] > 120.2), 'outliers dropped')
+  assert.ok(kept.length >= 24, `core kept (${kept.length})`)
+  const tight = [[120, 31], [120.001, 31], [120, 31.001], [120.002, 31.001], [120.004, 31.002]]
+  assert.equal(mainMass(tight).length, 5)
+  assert.equal(mainMass([[1, 1], [2, 2]]).length, 2)
+})
+
+test('动画父项：放大后新项的成员 key 落在上一帧的簇里', () => {
+  return import('../src/geo/cluster.js').then(({ leafIndex, anyLeafKey }) => {
+    const cs = [C('a', [120.3, 31.5], [P(1)]), C('b', [120.302, 31.501], [P(2)]), C('c', [120.6, 31.7], [P(3)])]
+    const idx = buildIndexes(cs)
+    const before = query(idx, 'cluster', WORLD, 10)
+    const after = query(idx, 'named', WORLD, 16)
+    const m = leafIndex(before)
+    const cl = before.find((i) => i.k === 2)
+    assert.ok(cl)
+    for (const it of after) {
+      const par = m.get(anyLeafKey(it))
+      assert.ok(par)
+      if (['a', 'b'].includes(anyLeafKey(it))) assert.equal(par.id, cl.id)
+    }
+  })
+})

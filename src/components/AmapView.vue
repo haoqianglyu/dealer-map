@@ -9,7 +9,7 @@ import { showName } from '@/utils/showroom'
 import { mountMarquee, alarmText } from '@/directives/marquee'
 import CONTEXT_CITIES from '@/data/cities-context.json'
 import { STATES, stateRank, worstState, alarmCount, hasNewAlarm, levelState, isActiveAlarm, NOTICE_COLOR } from '@/geo/states'
-import { buildIndexes, query, membersOf, expansionZoom, layoutLabels, circleSize, circleFont, zoomClusterFor, levelFor as levelAt, byPriority, ZOOM_TERMINAL } from '@/geo/cluster'
+import { buildIndexes, query, membersOf, expansionZoom, layoutLabels, circleSize, circleFont, zoomClusterFor, levelFor as levelAt, byPriority, ZOOM_TERMINAL, mainMass, leafIndex, anyLeafKey, queryZoom } from '@/geo/cluster'
 import { fmtNumber } from '@/utils/format'
 
 // 高德地图：自定义 HTML 标记 + 暖光热力。标记四个层级（docs/fable-clustering.md）：
@@ -283,14 +283,16 @@ function fitBounds(bounds, pad, city = false) {
   map.panBy((right - left) / -2, (bottom - top) / -2)
 }
 
-// 点击区县：缩放到该区所有小区的范围（至少到小区级别）
-// 只用区县中心附近的小区（个别小区按名称前缀在全市范围定位、或坐标离群，会把视野拉到很远）
+// 点击区县：缩放到该区小区的「主体」范围（至少到簇级）
+// 先只留区县中心附近的小区（个别小区按名称前缀在全市范围定位），再丢掉离主体很远的离群点（mainMass：
+// > 3 × 中位距离 + 5–95 分位外框），视野不会被一两个远点拉得偏到一侧；离群点平移仍可到达
 function zoomTo(points, center) {
   stopPan()
   if (center) {
     const near = points.filter((p) => Math.abs(p[0] - center[0]) < 0.35 && Math.abs(p[1] - center[1]) < 0.3)
     if (near.length) points = near
   }
+  points = mainMass(points)
   if (!points?.length) {
     // 该区还没有已定位的小区：放大到簇级的区县中心（至少有反馈）
     if (center) map.setZoomAndCenter(Math.max(map.getZoom(), zoomCluster() + 0.5), center, false, 350)

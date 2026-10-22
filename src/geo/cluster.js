@@ -169,3 +169,43 @@ export function layoutLabels(items, level, k = 1) {
   }
   return out
 }
+
+// 点区县：只框住「主体」小区，丢掉远处的离群点（视野不被个别点拉偏 / 拉远；离群点平移仍可到达）
+//   中心 = 经纬度中位数；丢掉离中心 > 3 × 中位距离的点（下限 ≈ 1.5 km，小区很集中时不误杀）；
+//   点数 ≥ 20 时再按 5–95 分位裁一次外框（长尾方向不再把视野拖向一侧）
+const median = (a) => {
+  const s = [...a].sort((x, y) => x - y)
+  const m = s.length >> 1
+  return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2
+}
+const quantile = (s, q) => s[Math.min(s.length - 1, Math.max(0, Math.round(q * (s.length - 1))))]
+export function mainMass(points) {
+  if (!points || points.length < 4) return points || []
+  const c = [median(points.map((p) => p[0])), median(points.map((p) => p[1]))]
+  const cos = Math.cos((c[1] * Math.PI) / 180)
+  const d = points.map((p) => Math.hypot((p[0] - c[0]) * cos, p[1] - c[1]))
+  const lim = Math.max(3 * median(d), 0.0135)
+  let kept = points.filter((_, i) => d[i] <= lim)
+  if (kept.length >= 20) {
+    const xs = kept.map((p) => p[0]).sort((a, b) => a - b)
+    const ys = kept.map((p) => p[1]).sort((a, b) => a - b)
+    const [x0, x1, y0, y1] = [quantile(xs, 0.05), quantile(xs, 0.95), quantile(ys, 0.05), quantile(ys, 0.95)]
+    kept = kept.filter((p) => p[0] >= x0 && p[0] <= x1 && p[1] >= y0 && p[1] <= y1)
+  }
+  return kept.length >= 2 ? kept : points
+}
+
+// 拆分 / 合并动画的父项查找（§6）：上一帧每项 → 它包含的小区 key；新项任取一个成员 key 命中即为父
+export function leafIndex(items) {
+  const m = new Map()
+  for (const it of items) {
+    if (it.key) m.set(it.key, it)
+    else if (it.clusterId != null) for (const f of it.idx.getLeaves(it.clusterId, Infinity)) m.set(f.properties.key, it)
+  }
+  return m
+}
+export function anyLeafKey(it) {
+  if (it.key) return it.key
+  const f = it.idx.getLeaves(it.clusterId, 1)[0]
+  return f ? f.properties.key : null
+}
