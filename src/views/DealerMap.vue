@@ -213,7 +213,7 @@ import { regionInfo } from '@/utils/region'
 import { STATES, applyStates, alarmStates, isActiveAlarm, alarmTag } from '@/geo/states'
 import { applyOnline, groupsOnlineStats, createOnlineTracker, sane } from '@/geo/online'
 import { fmtNumber, fmtArea } from '@/utils/format'
-import { tooltipStyle, categoryAxis, valueAxis } from '@/utils/chartTheme'
+import { tooltipStyle, categoryAxis, valueAxis, isLight } from '@/utils/chartTheme'
 import { vMarquee, alarmText } from '@/directives/marquee'
 import { theme, setTheme } from '@/composables/useTheme'
 
@@ -669,21 +669,26 @@ const timeStats = computed(() => {
 })
 const timeOption = computed(() => {
   const last = timeStats.value.length - 1
+  // 亮色（§2.4）：其余柱 #4b97ac、当前 #0e7490；轴字 #5b6b80；柱顶字 #3b4f6b
+  const lt = isLight()
+  const axisC = lt ? '#5b6b80' : '#8fb0d0'
+  const barC = lt ? '#4b97ac' : 'rgba(53,212,255,0.55)'
+  const curC = lt ? '#0e7490' : '#35d4ff'
   return {
     animationDuration: 600,
     animationEasing: 'cubicOut',
     grid: { left: 34, right: 10, top: 18, bottom: 22 },
-    tooltip: { ...tooltipStyle, trigger: 'axis', axisPointer: { type: 'shadow' } },
-    xAxis: categoryAxis({ data: timeStats.value.map((d) => (timeMode.value === 'month' ? d[0].slice(2) : d[0])), axisLabel: { color: '#8fb0d0', fontSize: 12 } }),
-    yAxis: valueAxis({ splitNumber: 3, axisLabel: { color: '#8fb0d0', fontSize: 11 } }),
+    tooltip: { ...tooltipStyle(), trigger: 'axis', axisPointer: { type: 'shadow' } },
+    xAxis: categoryAxis({ data: timeStats.value.map((d) => (timeMode.value === 'month' ? d[0].slice(2) : d[0])), axisLabel: { color: axisC, fontSize: 12 } }),
+    yAxis: valueAxis({ splitNumber: 3, axisLabel: { color: axisC, fontSize: 11 } }),
     series: [
       {
         type: 'bar',
         name: '新增项目',
-        data: timeStats.value.map((d, i) => ({ value: d[1], itemStyle: { color: i === last ? '#35d4ff' : 'rgba(53,212,255,0.55)' } })),
+        data: timeStats.value.map((d, i) => ({ value: d[1], itemStyle: { color: i === last ? curC : barC } })),
         barMaxWidth: 16,
         itemStyle: { borderRadius: [3, 3, 0, 0] },
-        label: { show: timeStats.value.length <= 12, position: 'top', color: '#b7d3f0', fontSize: 11 },
+        label: { show: timeStats.value.length <= 12, position: 'top', color: lt ? '#3b4f6b' : '#b7d3f0', fontSize: 11 },
       },
     ],
   }

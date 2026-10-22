@@ -339,4 +339,31 @@ onBeforeUnmount(() => document.removeEventListener('pointerdown', onDoc))
   color: var(--cp-muted);
   cursor: default;
 }
+/* ---------- 亮色（docs/fable-light-theme.md §7）：只加覆盖，深色规则不动 ---------- */
+:root[data-theme='light'] {
+  .cp__panel {
+    box-shadow: var(--dm-shadow-pop);
+  }
+  .cp__filter {
+    background: #f3f6f9;
+  }
+  .cp__list li.sel {
+    color: #10213a;
+  }
+  .cp:focus-within .cp__list li.act {
+    outline-color: rgba(14, 116, 144, 0.5);
+  }
+  .cp__bar {
+    background: rgba(16, 33, 58, 0.08);
+    b {
+      background: #4b97ac;
+    }
+  }
+  .cp__list li.sel .cp__bar b {
+    background: #0e7490;
+  }
+  .cp--title .cp__btn:hover {
+    background: rgba(16, 33, 58, 0.06);
+  }
+}
 </style>

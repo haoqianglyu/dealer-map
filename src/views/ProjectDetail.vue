@@ -232,7 +232,7 @@ import { me, getDistributor, getProject, getProjectConfig, getDeviceDataList, ge
 import { ctrlQuery, DeviceTimeout } from '@/api/ctrl'
 import { isActiveAlarm, alarmTag } from '@/geo/states'
 import { regionInfo, parseRegion } from '@/utils/region'
-import { tooltipStyle, categoryAxis, valueAxis } from '@/utils/chartTheme'
+import { tooltipStyle, categoryAxis, valueAxis, isLight } from '@/utils/chartTheme'
 import { isShowroom, showName } from '@/utils/showroom'
 
 defineOptions({ name: 'ProjectDetail' })
@@ -255,12 +255,18 @@ function logout() {
 const SENSOR_MODEL = '620db09cdcae9b926dc804e1' // niuniu：室内传感器 model
 // 曲线配色与 niuniu 相同：每个指标固定一种颜色，面积为同色 0.4 → 0.05 竖向渐变
 const NIU = { blue: [24, 144, 255], green: [0, 201, 120], cyan: [0, 229, 255], yellow: [245, 194, 43], purple: [179, 127, 235] }
-function lineStyleOf([r, g, b]) {
+// 亮色（§2.4）：同色相加深；面积 .22 → .02（白底上 .4 会盖掉网格）
+const NIU_LIGHT = { blue: [29, 111, 214], green: [15, 138, 95], cyan: [14, 116, 144], yellow: [161, 98, 7], purple: [109, 79, 211] }
+const NIU_NAME = new Map(Object.entries(NIU).map(([k, v]) => [v, k]))
+function lineStyleOf(rgb) {
+  const lt = isLight()
+  const [r, g, b] = lt ? NIU_LIGHT[NIU_NAME.get(rgb)] || rgb : rgb
+  const [a0, a1] = lt ? [0.22, 0.02] : [0.4, 0.05]
   const c = `rgb(${r}, ${g}, ${b})`
   return {
     itemStyle: { color: c },
     lineStyle: { width: 3, color: c },
-    areaStyle: { color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [{ offset: 0, color: `rgba(${r}, ${g}, ${b}, 0.4)` }, { offset: 1, color: `rgba(${r}, ${g}, ${b}, 0.05)` }]) },
+    areaStyle: { color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [{ offset: 0, color: `rgba(${r}, ${g}, ${b}, ${a0})` }, { offset: 1, color: `rgba(${r}, ${g}, ${b}, ${a1})` }]) },
   }
 }
 const DAY_COLOR = { 平均温度: NIU.blue, 平均露点: NIU.green }
@@ -406,7 +412,7 @@ const dayMetric = ref('平均温度')
 const dayRows = computed(() => (live[41]?.temperature || []).filter((t) => t.type === dayMetric.value))
 const dayOption = computed(() => ({
   grid: { left: 40, right: 12, top: 14, bottom: 24 },
-  tooltip: { ...tooltipStyle, trigger: 'axis', valueFormatter: (v) => `${v}°C` },
+  tooltip: { ...tooltipStyle(), trigger: 'axis', valueFormatter: (v) => `${v}°C` },
   xAxis: categoryAxis({ data: dayRows.value.map((t) => t.time), boundaryGap: false }),
   yAxis: valueAxis({ scale: true }),
   series: [{ type: 'line', name: dayMetric.value, data: dayRows.value.map((t) => +(+t.value).toFixed(1)), smooth: dayRows.value.length >= 8 ? 0.4 : false, symbol: 'none', ...lineStyleOf(DAY_COLOR[dayMetric.value] || NIU.blue) }],
@@ -426,9 +432,9 @@ function seriesOption(type) {
   const vals = (d[s.range] || []).map((v) => +(+v).toFixed(2))
   return {
     grid: { left: 44, right: 12, top: 14, bottom: 24 },
-    tooltip: { ...tooltipStyle, trigger: 'axis' },
+    tooltip: { ...tooltipStyle(), trigger: 'axis' },
     xAxis: categoryAxis({ data: rangeLabels(s.range, vals.length) }),
-    yAxis: valueAxis({ scale: true, name: type === 44 ? '(kWh)' : '', nameTextStyle: { color: '#93b5d6', fontSize: fs(11) } }),
+    yAxis: valueAxis({ scale: true, name: type === 44 ? '(kWh)' : '', nameTextStyle: { color: isLight() ? '#5b6b80' : '#93b5d6', fontSize: fs(11) } }),
     series: [{ type: 'line', data: vals, smooth: true, symbolSize: 6, symbol: 'circle', ...lineStyleOf(RANGE_COLOR[s.range] || NIU.blue) }],
   }
 }
@@ -491,7 +497,7 @@ const sensorOption = computed(() => {
   const m = METRICS.find((x) => x.key === metric.value)
   return {
     grid: { left: 44, right: 16, top: 16, bottom: 26 },
-    tooltip: { ...tooltipStyle, trigger: 'axis', valueFormatter: (v) => `${v}${m.unit}` },
+    tooltip: { ...tooltipStyle(), trigger: 'axis', valueFormatter: (v) => `${v}${m.unit}` },
     xAxis: categoryAxis({ data: daily.value.map((d) => d.k) }),
     yAxis: valueAxis({ scale: true }),
     // 只画有数据的日期，直线连接真实点（不用样条，避免过冲）
@@ -574,6 +580,134 @@ html.pd-noscroll body {
 </style>
 
 <style scoped lang="scss">
+/* ---------- 亮色主题（docs/fable-light-theme.md §7）：只加覆盖，深色规则不动；token 在 global.scss ---------- */
+:root[data-theme='light'] {
+  .pd__logo .mark {
+    color: #fff;
+    background: #0e7490;
+  }
+  .pd__logo .name,
+  .pd__title,
+  .ttl,
+  .sum__name,
+  .sum__h,
+  .kv b,
+  .rr__title {
+    color: var(--dm-text);
+  }
+  .hbtn {
+    color: #0e7490;
+    background: rgba(14, 116, 144, 0.08);
+    border-color: rgba(14, 116, 144, 0.45);
+    &:hover {
+      background: rgba(14, 116, 144, 0.16);
+    }
+  }
+  .pd__error {
+    color: #b42318;
+    background: rgba(255, 243, 243, 0.96);
+    border-color: rgba(215, 38, 61, 0.5);
+  }
+  .astrip {
+    background: rgba(14, 116, 144, 0.06);
+    border-color: rgba(14, 116, 144, 0.3);
+    &.on {
+      color: #b42318;
+      background: rgba(215, 38, 61, 0.08);
+      border-color: rgba(215, 38, 61, 0.5);
+    }
+  }
+  .live .dot {
+    background: #65758b;
+    &.on {
+      background: #0f8a5f;
+    }
+    &.off {
+      background: #d7263d;
+    }
+  }
+  .lbtn {
+    border-color: rgba(16, 33, 58, 0.2);
+  }
+  .sum__div {
+    border-left-color: rgba(16, 33, 58, 0.18);
+  }
+  .stats__div {
+    background: rgba(16, 33, 58, 0.12);
+  }
+  .rr__nav {
+    color: #10213a;
+    background: rgba(255, 255, 255, 0.9);
+    border-color: rgba(16, 33, 58, 0.16);
+    box-shadow: var(--dm-shadow);
+  }
+  .rr__card {
+    color: #5b6b80;
+    border-color: rgba(16, 33, 58, 0.14);
+    &.on {
+      color: #10213a;
+      border-color: rgba(14, 116, 144, 0.6);
+      background: rgba(14, 116, 144, 0.05);
+      box-shadow: 0 0 0 1px rgba(14, 116, 144, 0.15), 0 2px 8px rgba(16, 33, 58, 0.08);
+    }
+  }
+  .rr__head,
+  .rr__icon {
+    border-color: rgba(16, 33, 58, 0.12);
+  }
+  .rr__card.on .rr__head,
+  .rr__card.on .rr__icon {
+    border-color: rgba(14, 116, 144, 0.45);
+  }
+  .tabs button,
+  .pager button {
+    background: transparent;
+    border-color: rgba(16, 33, 58, 0.2);
+    &.on {
+      color: #0e7490;
+      background: rgba(14, 116, 144, 0.08);
+      border-color: #0e7490;
+    }
+  }
+  .eq {
+    th {
+      color: #3b4f6b;
+      background: #f3f6f9;
+    }
+    td {
+      border-bottom-color: rgba(16, 33, 58, 0.08);
+    }
+    tbody tr:nth-child(even) td {
+      background: rgba(16, 33, 58, 0.02);
+    }
+    .online {
+      color: #65758b;
+      &.on {
+        color: #0f8a5f;
+      }
+    }
+  }
+  .astrip__list {
+    background: rgba(255, 255, 255, 0.98);
+    border-color: rgba(16, 33, 58, 0.14);
+    box-shadow: var(--dm-shadow-pop);
+    li {
+      border-bottom-color: rgba(16, 33, 58, 0.12);
+      &.on {
+        border-left-color: #d7263d;
+      }
+    }
+    .d {
+      color: #10213a;
+    }
+  }
+  .drawer {
+    box-shadow: -8px 0 24px rgba(16, 33, 58, 0.14);
+    header b {
+      color: var(--dm-text);
+    }
+  }
+}
 /* 版式与 niuniu room-detail 一致（直角细边框面板、标题左上），颜色用 dealer-map 主题变量 */
 .pd-screen {
   position: fixed;

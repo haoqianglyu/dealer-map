@@ -167,4 +167,16 @@ onBeforeUnmount(() => document.removeEventListener('pointerdown', onDoc))
   color: var(--dm-accent, #00d4ff);
   background: rgba(0, 212, 255, 0.08);
 }
+/* 亮色（docs/fable-light-theme.md §7）：只加覆盖 */
+:root[data-theme='light'] .ss__list {
+  box-shadow: var(--dm-shadow-pop);
+}
+:root[data-theme='light'] .ss__list li.hover {
+  color: #10213a;
+  background: rgba(14, 116, 144, 0.1);
+}
+:root[data-theme='light'] .ss__list li.sel {
+  color: #0e7490;
+  background: rgba(14, 116, 144, 0.06);
+}
 </style>
