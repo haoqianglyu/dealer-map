@@ -44,7 +44,7 @@ let recs = new Map() // 标记 id → { marker, html, tap }（按 id 增量更�
 let labels = []
 let indexes = null // 聚合索引（communities 变化时重建，防抖 300 ms）
 let idxTimer = 0
-let lastBox = null // 最近一次查询的范围（视野四边各外扩 25%）：平移不出这个范围就不重查
+let lastBox = null // 最近一次查询的范围（视野四边各外扩 15%）：平移不出这个范围就不重查
 let lastItems = []
 let fitZoom = null // 最近一次城市适配的缩放级别：区县 → 簇 的分界随它走
 let level = null
@@ -543,13 +543,19 @@ function syncMarkers(list, anim = null) {
   }
   leave([...recs.values()], Boolean(anim))
   if (add.length) map.add(add)
-  for (const [node, s] of entering) enter(node, anim.kind, anim.from ? anim.from(s) : null)
+  // 只给视野内的新项做动画（外扩区的项看不见，省掉 WAAPI 和父项查找）
+  const { width, height } = entering.length ? map.getSize() : { width: 0, height: 0 }
+  for (const [node, s] of entering) {
+    const p = s.it ? { x: s.it.x, y: s.it.y } : map.lngLatToContainer(s.lnglat)
+    if (p.x < -60 || p.y < -60 || p.x > width + 60 || p.y > height + 60) continue
+    enter(node, anim.kind, anim.from ? anim.from(s) : null)
+  }
   recs = next
   if (next.size) requestAnimationFrame(ready)
 }
 
-// 查询范围：视野四边各外扩 25%（平移时少闪）
-function viewBox(grow = 0.25) {
+// 查询范围：视野四边各外扩 15%（平移时少闪；5k 点时外扩越大每次要建的 DOM 越多）
+function viewBox(grow = 0.15) {
   const b = map.getBounds()
   const sw = b.getSouthWest()
   const ne = b.getNorthEast()
@@ -676,6 +682,7 @@ function renderMarkers(animate = true) {
     it.y = p.y
   }
   const lay = layoutLabels(items, level, k())
+  const t1 = performance.now()
   const anim = animFor(lastView, level, zq, animate)
   lastItems = items
   lastView = { level, zq, items }
@@ -690,7 +697,7 @@ function renderMarkers(animate = true) {
     })),
     anim
   )
-  if (import.meta.env.DEV) window.__dmPerf = { ms: +(performance.now() - t0).toFixed(1), items: items.length, anim: anim?.kind || null }
+  if (import.meta.env.DEV) window.__dmPerf = { ms: +(performance.now() - t0).toFixed(1), layout: +(t1 - t0).toFixed(1), items: items.length, anim: anim?.kind || null }
 }
 
 // 底图要素：远景只留底色 + 道路（地名由我们画，避免同名两份）；≥ 12 级加建筑与注记（区县 / 道路 / POI 名，由高德画）
