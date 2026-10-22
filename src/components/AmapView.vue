@@ -194,6 +194,7 @@ function onPopWheel(e) {
 }
 function onPopTouch(e) {
   if (inPop(e.target)) e.stopPropagation()
+  else onMoveGuard(e)
 }
 function onPopOver(e) {
   if (inPop(e.target) && map) map.setStatus({ scrollWheel: false, dragEnable: false, doubleClickZoom: false })
@@ -388,11 +389,54 @@ function tappable(html, onTap) {
   return node
 }
 
-// 按 id 增量同步标记：html 不变的不动（平移 / 告警刷新时不闪），变了的 setContent，消失的移除
-function syncMarkers(list) {
+// 拆分 / 合并动画（§6）。只动 Marker content 根节点（.dm-hit）的 transform / opacity（合成层，不触发布局）；
+// 高德用外层 .amap-marker 定位，互不干扰。Web Animations API：不需要「先设初值、下一帧清零」的强制回流。
+//   拆分（放大）：新项从父项的屏幕位置平移到自身位置，240 ms，透明度 0→1
+//   合并（缩小）：新项 scale .7→1，160 ms；旧项原地淡出 120 ms（不做汇聚位移，镜头本身在动）
+//   prefers-reduced-motion：只做 120 ms 淡入淡出
+//   同级平移新进入视野的项：120 ms 淡入；数据刷新（同视野）不动画
+const SPLIT_MS = 240
+const MERGE_MS = 160
+const FADE_MS = 120
+const EASE = 'cubic-bezier(.2,.7,.2,1)'
+const reducedMotion = () => typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches
+let fading = new Set() // 正在淡出、稍后移除的旧标记
+function enter(node, kind, from) {
+  if (!node || !node.animate || !kind) return
+  if (reducedMotion() || kind === 'fade') return node.animate([{ opacity: 0 }, { opacity: 1 }], { duration: FADE_MS, easing: 'ease-out' })
+  if (kind === 'split' && from) {
+    node.animate([{ transform: `translate(${from[0]}px,${from[1]}px) scale(.6)`, opacity: 0 }, { transform: 'none', opacity: 1 }], { duration: SPLIT_MS, easing: EASE })
+  } else if (kind === 'merge' || kind === 'split') {
+    node.animate([{ transform: 'scale(.7)', opacity: 0 }, { transform: 'none', opacity: 1 }], { duration: MERGE_MS, easing: EASE })
+  }
+}
+function leave(rs, animate) {
+  const ms = rs.map((r) => r.marker)
+  if (!ms.length) return
+  if (!animate) return map.remove(ms)
+  for (const r of rs) {
+    const n = r.node
+    if (!n || !n.animate) {
+      map.remove(r.marker)
+      continue
+    }
+    n.style.pointerEvents = 'none'
+    r.marker.setzIndex(110) // 退场的压在新项下面
+    fading.add(r.marker)
+    n.animate([{ opacity: 1 }, { opacity: 0 }], { duration: FADE_MS, easing: 'ease-in', fill: 'forwards' }).onfinish = () => {
+      if (!fading.delete(r.marker) || !map) return
+      map.remove(r.marker)
+    }
+  }
+}
+
+// 按 id 增量同步标记：html 不变的不动（平移 / 告警刷新时不闪），变了的 setContent，消失的移除。
+// anim = { kind: 'split' | 'merge' | 'fade', from(s) → [dx, dy] | null }：新出现的项做入场，消失的项淡出
+function syncMarkers(list, anim = null) {
   const { AMap } = props
   const next = new Map()
   const add = []
+  const entering = []
   for (const s of list) {
     let r = recs.get(s.id)
     if (r) {
@@ -400,18 +444,22 @@ function syncMarkers(list) {
       r.tap = s.tap
       if (r.html !== s.html) {
         r.html = s.html
-        r.marker.setContent(tappable(s.html, () => r.tap()))
+        r.node = tappable(s.html, () => r.tap())
+        r.marker.setContent(r.node)
         r.marker.setzIndex(s.z)
       }
     } else {
       r = { html: s.html, tap: s.tap }
-      r.marker = new AMap.Marker({ position: s.lnglat, anchor: 'center', content: tappable(s.html, () => r.tap()), zIndex: s.z })
+      r.node = tappable(s.html, () => r.tap())
+      r.marker = new AMap.Marker({ position: s.lnglat, anchor: 'center', content: r.node, zIndex: s.z })
       add.push(r.marker)
+      if (anim) entering.push([r.node, s])
     }
     next.set(s.id, r)
   }
-  if (recs.size) map.remove([...recs.values()].map((r) => r.marker))
+  leave([...recs.values()], Boolean(anim))
   if (add.length) map.add(add)
+  for (const [node, s] of entering) enter(node, anim.kind, anim.from ? anim.from(s) : null)
   recs = next
   if (next.size) requestAnimationFrame(ready)
 }
@@ -427,8 +475,21 @@ function viewBox(grow = 0.25) {
 }
 const inside = (a, b) => b && a[0] >= b[0] && a[1] >= b[1] && a[2] <= b[2] && a[3] <= b[3]
 
+// 开发压测：localStorage.dmStress = 5000 → 在真实小区周围抖动复制到 N 个点（验证 5k 点下的流畅度）；生产构建不含
+function stressed(list) {
+  const n = (import.meta.env.DEV && Number(localStorage.getItem('dmStress'))) || 0
+  if (!n || !list.length) return list
+  const out = [...list]
+  let seed = 7
+  const rnd = () => ((seed = (seed * 16807) % 2147483647) / 2147483647) - 0.5
+  for (let i = 0; out.length < n; i++) {
+    const c = list[i % list.length]
+    out.push({ ...c, key: `${c.key}~${i}`, lnglat: [c.lnglat[0] + rnd() * 0.12, c.lnglat[1] + rnd() * 0.1] })
+  }
+  return out
+}
 function rebuildIndexes() {
-  indexes = buildIndexes(props.communities, k())
+  indexes = buildIndexes(stressed(props.communities), k())
   lastBox = null
 }
 
@@ -453,14 +514,57 @@ function openGroup(it, focusKey = null) {
   })
 }
 
-function renderMarkers() {
+// 上一帧的视图（决定动画方向）：{ level, zq, items }
+let lastView = { level: null, zq: null, items: [] }
+// 新项的父项屏幕偏移（相对自身）：放大时从父项位置飞出
+function parentFrom(prev, nextLevel) {
+  if (prev.level === 'district') {
+    const byName = new Map(props.districts.map((d) => [d.label, d.lnglat]))
+    return (s) => {
+      const ll = s.it && byName.get(String(s.it.dists || '').split('|')[0])
+      return ll ? offsetTo(ll, s.lnglat) : null
+    }
+  }
+  if (nextLevel === 'district' || !prev.items.length) return null
+  let leaves = null // 懒建：只在真有新项时遍历一次上一帧的成员（≤ 5k）
+  return (s) => {
+    if (!s.it) return null
+    leaves = leaves || leafIndex(prev.items)
+    const par = leaves.get(anyLeafKey(s.it))
+    return par ? offsetTo(par.lnglat, s.lnglat) : null
+  }
+}
+function offsetTo(fromLL, toLL) {
+  const a = map.lngLatToContainer(fromLL)
+  const b = map.lngLatToContainer(toLL)
+  const dx = a.x - b.x
+  const dy = a.y - b.y
+  return Math.hypot(dx, dy) < 2 ? null : [dx, dy]
+}
+// 层级 / 级别变化 → 动画方向：放大 = split，缩小 = merge，同级平移 = fade
+const RANK = { district: 0, cluster: 1, named: 2, terminal: 2 }
+function animFor(prev, nextLevel, zq, animate) {
+  if (!animate || prev.level == null) return null
+  const a = RANK[prev.level] * 100 + (prev.zq ?? 0)
+  const b = RANK[nextLevel] * 100 + (zq ?? 0)
+  if (b > a) return { kind: 'split', from: parentFrom(prev, nextLevel) }
+  if (b < a) return { kind: 'merge' }
+  return { kind: 'fade' }
+}
+
+// animate = false：数据刷新 / 模式切换（同视野重画，不做入场动画）
+function renderMarkers(animate = true) {
   if (!map) return
+  const t0 = performance.now()
   if (props.mode === 'heat') {
     lastItems = []
+    lastView = { level: null, zq: null, items: [] }
     return syncMarkers([])
   }
   if (level === 'district') {
     lastItems = []
+    const anim = animFor(lastView, 'district', null, animate)
+    lastView = { level: 'district', zq: null, items: [] }
     return syncMarkers(
       props.districts.map((d) => ({
         id: `d:${d.key}`,
@@ -468,28 +572,36 @@ function renderMarkers() {
         html: districtHtml(d),
         z: 120 + stateRank(worstState(d.projects)),
         tap: () => zoomTo(d.points, d.lnglat),
-      }))
+      })),
+      anim
     )
   }
   if (!indexes) rebuildIndexes()
   lastBox = viewBox()
-  const items = query(indexes, level, lastBox, map.getZoom())
+  const z = map.getZoom()
+  const zq = level === 'cluster' ? Math.min(13, queryZoom(z)) : queryZoom(z)
+  const items = query(indexes, level, lastBox, z)
   for (const it of items) {
     const p = map.lngLatToContainer(it.lnglat)
     it.x = p.x
     it.y = p.y
   }
   const lay = layoutLabels(items, level, k())
+  const anim = animFor(lastView, level, zq, animate)
   lastItems = items
+  lastView = { level, zq, items }
   syncMarkers(
     items.map((it) => ({
       id: it.id,
+      it,
       lnglat: it.lnglat,
       html: itemHtml(it, lay.get(it.id)),
       z: 120 + it.rank * 2 + (it.k > 1 ? 1 : 0),
       tap: () => onItemTap(it),
-    }))
+    })),
+    anim
   )
+  if (import.meta.env.DEV) window.__dmPerf = { ms: +(performance.now() - t0).toFixed(1), items: items.length, anim: anim?.kind || null }
 }
 
 // 底图要素：远景只留底色 + 道路（地名由我们画，避免同名两份）；≥ 12 级加建筑与注记（区县 / 道路 / POI 名，由高德画）
@@ -517,9 +629,9 @@ function renderHeat() {
   heat.show(on)
 }
 
-function render() {
+function render(animate = true) {
   if (!map) return
-  renderMarkers()
+  renderMarkers(animate)
   renderLabels()
   renderHeat()
 }
@@ -540,9 +652,22 @@ function onMove() {
   if (!inside(viewBox(0), lastBox)) renderMarkers()
 }
 
+// 在标记上按下后、移动还没超过 TAP_SLOP 时，把移动事件挡在高德之前（捕获阶段）：
+// 否则高德把这次抖动的点按当成一次几像素的拖动，抬起后（我们已经缩放到新视野）再按旧级别的锚点把地图平移回去，
+// 一下推出好几公里（实测点滨湖区落到惠山）。超过 TAP_SLOP 就放行 → 从标记上开始拖地图照常可用。
+let downOnMarker = false
+function onMoveGuard(e) {
+  if (!downOnMarker || !downAt) return
+  const t = e.touches ? e.touches[0] : e
+  if (Math.hypot(t.clientX - downAt[0], t.clientY - downAt[1]) <= TAP_SLOP * k()) e.stopPropagation()
+  else downOnMarker = false
+}
+const endGuard = () => (downOnMarker = false)
+
 // × 用 pointerdown 直接关闭（捕获阶段，高德 InfoWindow 内部吞掉 click 时也可靠）
 function onPopDown(e) {
   downAt = [e.clientX, e.clientY]
+  downOnMarker = Boolean(e.target.closest && e.target.closest('.dm-hit'))
   // 用户开始拖动 / 点地图：停掉进行中的快速平移，不与手势抢视野
   if (!inPop(e.target)) stopPan()
   const t = e.target.closest && e.target.closest('[data-act="close"]')
@@ -595,6 +720,8 @@ onMounted(() => {
   el.value.addEventListener('wheel', onPopWheel, { capture: true, passive: false })
   el.value.addEventListener('touchmove', onPopTouch, { capture: true, passive: true })
   el.value.addEventListener('pointerover', onPopOver, true)
+  for (const t of ['mousemove', 'pointermove']) el.value.addEventListener(t, onMoveGuard, true)
+  for (const t of ['pointerup', 'pointercancel']) window.addEventListener(t, endGuard, true)
   el.value.addEventListener('pointerout', onPopOut, true)
   el.value.addEventListener('keydown', onPopKey)
   map.addControl(new AMap.Scale()) // 位置 / 样式由下方 CSS 覆盖（左下、图例上方）
@@ -628,7 +755,7 @@ watch(
     idxTimer = setTimeout(() => {
       if (!map) return
       rebuildIndexes()
-      render()
+      render(false)
     }, 300)
   }
 )
@@ -637,7 +764,7 @@ watch(
   () => {
     info && info.close()
     applyFeatures()
-    render()
+    render(false)
   }
 )
 // 告警聚焦：直接到最细一级（16），找到包含该小区的项（单小区或终态簇），打开它的弹窗
@@ -703,12 +830,15 @@ onBeforeUnmount(() => {
     el.value && el.value.removeEventListener('wheel', onPopWheel, true)
     el.value && el.value.removeEventListener('touchmove', onPopTouch, true)
     el.value && el.value.removeEventListener('pointerover', onPopOver, true)
+    for (const t of ['mousemove', 'pointermove']) el.value && el.value.removeEventListener(t, onMoveGuard, true)
+    for (const t of ['pointerup', 'pointercancel']) window.removeEventListener(t, endGuard, true)
     el.value && el.value.removeEventListener('pointerout', onPopOut, true)
     el.value && el.value.removeEventListener('keydown', onPopKey)
     clearPopMq()
     map.destroy()
   }
   map = heat = info = indexes = null
+  fading = new Set()
   recs = new Map()
   lastItems = []
   labels = []
