@@ -138,13 +138,15 @@
               v-for="a in alarmFeed"
               :key="a.id"
               :class="{ on: a.active, fresh: a.fresh, off: !a.located }"
-              :title="a.located ? `${fmtAbs(a.ts)} · 点击定位到小区` : undefined"
-              :tabindex="a.located ? 0 : -1"
-              @click="focusAlarm(a)"
-              @keydown.enter.prevent="focusAlarm(a)"
+              :title="a.located ? `${fmtAbs(a.ts)} · 点击定位到小区` : `${fmtAbs(a.ts)} · 该小区尚未定位，点击查看项目详情`"
+              tabindex="0"
+              role="button"
+              @click="tapAlarm(a)"
+              @keydown.enter.prevent="tapAlarm(a)"
             >
-              <span class="l1"><b class="name">{{ a.label }}</b><small>{{ a.district }}</small><span class="t">{{ fmtRel(a.ts) }}</span></span>
-              <span class="l2"><span v-marquee class="meta"><span>{{ a.text }}</span></span><em v-if="!a.active" class="tag">{{ a.status === 1 ? '已恢复' : '已处理' }}</em><button v-if="!a.located" class="unloc" type="button" title="该小区尚未定位，点击查看项目详情" @click.stop="openProject(a.projectId)">未定位</button></span>
+              <!-- 整行是点按目标（电视规则）：已定位 → 飞到小区；未定位 → 项目详情 -->
+              <span class="l1"><b class="name">{{ a.label }}</b><small>{{ a.district }}</small><em v-if="!a.located" class="unloc">未定位</em><span class="t">{{ fmtRel(a.ts) }}</span></span>
+              <span class="l2"><span v-marquee class="meta"><span>{{ a.text }}</span></span><em v-if="!a.active" class="tag">{{ a.status === 1 ? '已恢复' : '已处理' }}</em></span>
               <i class="chev" aria-hidden="true">›</i>
             </li>
           </ul>
@@ -470,6 +472,9 @@ const fmtRel = (ms) => {
 }
 function openProject(id) {
   if (id) router.push(`/project/${id}`)
+}
+function tapAlarm(a) {
+  a.located ? focusAlarm(a) : openProject(a.projectId)
 }
 function focusAlarm(a) {
   if (!a.located) return
@@ -1340,8 +1345,9 @@ onBeforeUnmount(() => {
     &:not(.on) {
       opacity: 0.55;
     }
-    &.off {
-      cursor: default;
+    &:focus-visible {
+      outline: 2px solid var(--dm-accent);
+      outline-offset: -2px;
     }
   }
   .l1,
@@ -1408,32 +1414,16 @@ onBeforeUnmount(() => {
     }
   }
   .unloc {
-    position: relative;
     flex: none;
-    height: 28px;
-    padding: 0 10px;
-    font: inherit;
-    font-size: 12px;
-    line-height: 26px;
+    height: 18px;
+    padding: 0 6px;
+    font-size: 11px;
+    font-style: normal;
+    line-height: 16px;
     color: #ffc722;
     background: rgba(255, 199, 34, 0.1);
     border: 1px solid rgba(255, 199, 34, 0.45);
     border-radius: 3px;
-    cursor: pointer;
-    &:hover,
-    &:focus-visible {
-      background: rgba(255, 199, 34, 0.2);
-      outline: none;
-    }
-    &:focus-visible {
-      outline: 2px solid #ffc722;
-      outline-offset: 1px;
-    }
-    &::after {
-      content: '';
-      position: absolute;
-      inset: -6px 0;
-    }
   }
   .tag {
     flex: none;
