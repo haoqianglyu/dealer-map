@@ -17,7 +17,8 @@ export const QUEUE_MAX = 3
 export const INPUTS = ['pointerdown', 'pointermove', 'wheel', 'keydown', 'touchstart']
 export const CHIP = { heatProjects: '热力 · 小区内项目数', heatAlarms: '热力 · 一级告警（近 10 天）' }
 
-// ?tour=off|0 / now|1 / <秒>（hash 后的 ? 与 search 都读，同 ?theme）；localStorage.dm_tour='off' 持久禁用、dm_tour_idle（秒）改阈值
+// ?tour=off|0 / now|1 / <秒>（hash 后的 ? 与 search 都读，同 ?theme）；localStorage.dm_tour='off' 持久禁用（顶栏「巡航」开关写它）、dm_tour_idle（秒）改阈值
+// enabled = 本次会话的初值：?tour=off|now 覆盖本次会话（不写 storage）；否则看 dm_tour（默认开）
 const clampSec = (v) => (Number.isFinite(v) && v > 0 ? Math.min(3600, Math.max(30, v)) : 0)
 export function tourConfig({ search = '', hash = '', storage = null } = {}) {
   const q = new URLSearchParams((hash.split('?')[1] || '') + '&' + search.replace(/^\?/, ''))
@@ -28,11 +29,21 @@ export function tourConfig({ search = '', hash = '', storage = null } = {}) {
   } catch {
     /* 隐私模式 */
   }
-  const enabled = !(p === 'off' || p === '0' || stored.off)
-  const now = enabled && (p === 'now' || p === '1')
+  const forceOff = p === 'off' || p === '0'
+  const forceNow = p === 'now' || p === '1'
+  const enabled = forceNow || (!forceOff && !stored.off)
+  const now = forceNow
   const sec = !now && /^\d+$/.test(p) ? clampSec(Number(p)) : 0
   const idleMs = (sec || clampSec(stored.idle) || IDLE_MS / 1000) * 1000
   return { enabled, now, idleMs }
+}
+// 顶栏开关：持久化到 dm_tour（'on' / 'off'）
+export function saveTourPref(on, storage) {
+  try {
+    storage?.setItem('dm_tour', on ? 'on' : 'off')
+  } catch {
+    /* 隐私模式：只本次会话生效 */
+  }
 }
 
 /**
@@ -47,7 +58,7 @@ export function useTour(o) {
   const setT = o.setTimeout || ((f, ms) => setTimeout(f, ms))
   const clearT = o.clearTimeout || ((t) => clearTimeout(t))
   const idleMs = o.idleMs || IDLE_MS
-  const enabled = o.enabled !== false
+  const enabled = ref(o.enabled !== false) // 顶栏开关可随时改（setEnabled）
   const visible = o.visible || (() => typeof document === 'undefined' || document.visibilityState === 'visible')
 
   const state = ref('idle') // 'idle' | 'running'
@@ -197,7 +208,7 @@ export function useTour(o) {
 
   // ---------- 开始 / 退出 ----------
   function start() {
-    if (!enabled || state.value !== 'idle' || !active || !visible()) return false
+    if (!enabled.value || state.value !== 'idle' || !active || !visible()) return false
     const c = o.canStart()
     if (!c.ok) return false
     clearT(idleTimer)
@@ -250,11 +261,11 @@ export function useTour(o) {
   // ---------- 空闲判定（§1.1）：输入只写时间戳；一个 setTimeout 到点检查，不够按差值再排 ----------
   function armIdle(ms) {
     clearT(idleTimer)
-    idleTimer = enabled && active ? setT(checkIdle, Math.max(0, ms)) : 0
+    idleTimer = enabled.value && active ? setT(checkIdle, Math.max(0, ms)) : 0
   }
   function checkIdle() {
     idleTimer = 0
-    if (!enabled || !active || !visible() || state.value !== 'idle') return
+    if (!enabled.value || !active || !visible() || state.value !== 'idle') return
     const c = o.canStart()
     const th = c.reading ? idleMs * READING_FACTOR : idleMs
     const el = now() - lastInputAt
@@ -389,12 +400,28 @@ export function useTour(o) {
   // ---------- 监听 ----------
   const target = o.target === undefined ? (typeof window !== 'undefined' ? window : null) : o.target
   const doc = o.doc === undefined ? (typeof document !== 'undefined' ? document : null) : o.doc
-  if (enabled && target) {
+  // 监听始终挂上（开关随时可能被打开）；关着时只记时间戳，零开销
+  if (target) {
     const opt = { capture: true, passive: true, ...(ac ? { signal: ac.signal } : {}) }
     for (const t of INPUTS) target.addEventListener(t, onInput, opt)
     if (doc) doc.addEventListener('visibilitychange', onVisibility, ac ? { signal: ac.signal } : undefined)
   }
-  if (enabled) armIdle(idleMs)
+  if (enabled.value) armIdle(idleMs)
+
+  // 关：巡览中立即退出（同输入退出：胶囊 ≤ 100 ms 淡出、恢复模式），并撤掉空闲计时；开：从现在重新计 120 s
+  function setEnabled(v) {
+    v = Boolean(v)
+    if (v === enabled.value) return
+    enabled.value = v
+    if (!v) {
+      stop('disabled')
+      clearT(idleTimer)
+      idleTimer = 0
+    } else {
+      lastInputAt = now()
+      armIdle(idleMs)
+    }
+  }
 
   function dispose() {
     stop('dispose')
@@ -406,6 +433,8 @@ export function useTour(o) {
   const dbg = { plan: null, lastStop: '' }
   return {
     state,
+    enabled,
+    setEnabled,
     step,
     chip,
     start,

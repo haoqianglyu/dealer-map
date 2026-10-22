@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { useTour, tourConfig, IDLE_MS, DWELL, FLY_MS, SETTLE_MS, THROTTLE_MS } from '../src/composables/useTour.js'
+import { useTour, tourConfig, saveTourPref, IDLE_MS, DWELL, FLY_MS, SETTLE_MS, THROTTLE_MS } from '../src/composables/useTour.js'
 
 // 假时钟：setTimeout 排进列表，advance 按时刻顺序执行（每个回调后冲刷微任务，async 步骤能接着走）
 function fakeClock() {
@@ -104,6 +104,51 @@ test('配置：?tour=off / now / 秒数（30–3600）、localStorage 持久禁�
   assert.equal(tourConfig({ hash: '#/x?tour=5' }).idleMs, 30000)
   assert.equal(tourConfig({ storage: st({ dm_tour: 'off' }) }).enabled, false)
   assert.equal(tourConfig({ storage: st({ dm_tour_idle: '300' }) }).idleMs, 300000)
+  // 默认开；dm_tour='on' 同默认；?tour=now 覆盖持久关（本次会话）、?tour=off 覆盖持久开
+  assert.equal(tourConfig({}).enabled, true)
+  assert.equal(tourConfig({ storage: st({ dm_tour: 'on' }) }).enabled, true)
+  assert.deepEqual(tourConfig({ search: '?tour=now', storage: st({ dm_tour: 'off' }) }), { enabled: true, now: true, idleMs: IDLE_MS })
+  assert.equal(tourConfig({ search: '?tour=off', storage: st({ dm_tour: 'on' }) }).enabled, false)
+  const mem = {}
+  const ws = { getItem: (k) => mem[k] ?? null, setItem: (k, v) => (mem[k] = String(v)) }
+  saveTourPref(false, ws)
+  assert.equal(tourConfig({ storage: ws }).enabled, false)
+  saveTourPref(true, ws)
+  assert.equal(tourConfig({ storage: ws }).enabled, true)
+  saveTourPref(true, { setItem: () => { throw new Error('quota') } }) // 隐私模式不抛
+})
+
+test('开关：巡览中关掉立即退出且不再计时；重新打开从此刻计 120 s', async () => {
+  const { clock, tour, env } = setup()
+  env.mode = 'markers'
+  await clock.advance(IDLE_MS + 1)
+  assert.equal(tour.state.value, 'running')
+  tour.setEnabled(false)
+  assert.equal(tour.enabled.value, false)
+  assert.equal(tour.state.value, 'idle')
+  assert.equal(tour.chip.show, false)
+  assert.equal(tour.start(), false)
+  await clock.advance(IDLE_MS * 10)
+  assert.equal(tour.state.value, 'idle')
+  assert.equal(tour.debug().idleArmed, false)
+  tour.setEnabled(true)
+  await clock.advance(IDLE_MS - 1)
+  assert.equal(tour.state.value, 'idle')
+  await clock.advance(2)
+  assert.equal(tour.state.value, 'running')
+})
+
+test('开关：初始关（enabled:false）时监听仍在，打开后按空闲规则开始', async () => {
+  const clock = fakeClock()
+  const target = new EventTarget()
+  const tour = useTour({ enabled: false, now: clock.now, setTimeout: clock.setTimeout, clearTimeout: clock.clearTimeout, target, doc: new EventTarget(), visible: () => true, map: () => null, canStart: () => ({ ok: true }), plan: () => ({ story: 'alarm', city: 'X', districts: [] }), getMode: () => 'markers', setMode: () => {}, getMetric: () => 'projects', setMetric: () => {} })
+  await clock.advance(IDLE_MS * 2)
+  assert.equal(tour.state.value, 'idle')
+  tour.setEnabled(true)
+  await clock.advance(IDLE_MS + 1)
+  assert.equal(tour.state.value, 'running')
+  tour.setEnabled(false)
+  assert.equal(tour.state.value, 'idle')
 })
 
 test('120 s 无输入开始；输入只推迟（不按每次输入重置计时器）', async () => {
