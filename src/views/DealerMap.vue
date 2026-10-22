@@ -84,9 +84,21 @@
             <button :class="{ on: heatMetric === 'projects' }" :tabindex="mode === 'heat' ? 0 : -1" @click="heatMetric = 'projects'">项目</button>
             <button :class="{ on: heatMetric === 'alarms' }" :tabindex="mode === 'heat' ? 0 : -1" @click="heatMetric = 'alarms'">告警</button>
           </div>
-          <!-- 展厅巡览：点按 = 立即开始；没有「停止」—— 任何触摸就是停止。1350（compact）下等顶栏减负（第 8 条）后再显示 -->
-          <button v-if="tourCfg.enabled && AMapRef && !compact" class="icon-btn tour-btn" title="开始自动巡览" aria-label="开始自动巡览" @click="tour.start()">
-            <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M8 5.5v13l10.5-6.5L8 5.5z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" /></svg>
+          <!-- 展厅巡航开关（一个开关，没有悬停态）：开 = 空闲 120 s 后自动巡览；关 = 巡览中立即退出且不再自动开始。
+               状态存 localStorage.dm_tour；?tour=off|now 只覆盖本次会话；「立即开始」用 ?tour=now -->
+          <button
+            v-if="AMapRef"
+            class="tour-tg"
+            :class="{ on: tourOn, running: tour.state.value === 'running' }"
+            role="switch"
+            :aria-checked="tourOn"
+            aria-label="自动巡航"
+            :title="tourOn ? '自动巡航已开：无人操作 2 分钟后自动讲解（点按关闭）' : '自动巡航已关（点按开启）'"
+            @click="toggleTour"
+          >
+            <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 21s-6.5-5.6-6.5-11a6.5 6.5 0 0 1 13 0c0 5.4-6.5 11-6.5 11z" /><path d="M10.2 7.4v5.2l4.3-2.6-4.3-2.6z" /></g></svg>
+            <span class="tour-tg__label">巡航</span>
+            <span class="tour-tg__track" aria-hidden="true"><i /></span>
           </button>
           <div class="clock">
             <b>{{ clock.time }}</b><small>{{ clock.date }}</small>
@@ -257,7 +269,7 @@ import { hasAmapKey, loadAmap } from '@/geo/amap'
 import { loadOverrides, loadSeed, lookupLocal, createGeocodeQueue, jitter } from '@/geo/geocoder'
 import { regionInfo } from '@/utils/region'
 import { STATES, applyStates, alarmStates, isActiveAlarm, alarmTag, alarmCount } from '@/geo/states'
-import { useTour, tourConfig } from '@/composables/useTour'
+import { useTour, tourConfig, saveTourPref } from '@/composables/useTour'
 import { planTour, cityChip, newAlarms } from '@/geo/tourPlan'
 import { createAlarmTracker, retryDelay } from '@/geo/alarmPoll'
 import { applyOnline, groupsOnlineStats, createOnlineTracker, sane } from '@/geo/online'
@@ -789,6 +801,13 @@ const tour = useTour({
     dipTimer = setTimeout(() => el.classList.remove('tour-dip'), 150)
   },
 })
+const tourOn = computed(() => tour.enabled.value)
+// 顶栏开关：写 dm_tour（持久）；关掉时巡览中立即退出（按下那一刻的 pointerdown 已先退出，这里再兜底键盘 / 程序触发）
+function toggleTour() {
+  const v = !tour.enabled.value
+  tour.setEnabled(v)
+  saveTourPref(v, typeof localStorage === 'undefined' ? null : localStorage)
+}
 onActivated(() => tour.setActive(true))
 onDeactivated(() => tour.setActive(false))
 // ?tour=now：首批标记就绪后立即开始一轮（之后按正常空闲规则）
@@ -1331,6 +1350,23 @@ onBeforeUnmount(() => {
       background: rgba(16, 33, 58, 0.08);
     }
   }
+  .tour-tg {
+    background: rgba(16, 33, 58, 0.04);
+    border-color: rgba(16, 33, 58, 0.14);
+    &:hover,
+    &:focus-visible {
+      background: rgba(16, 33, 58, 0.08);
+    }
+    &__track {
+      background: rgba(16, 33, 58, 0.16);
+    }
+    &.on {
+      background: rgba(14, 116, 144, 0.1);
+    }
+    &.on .tour-tg__track i {
+      background: #fff;
+    }
+  }
   .tour-chip {
     color: var(--dm-text-2);
     background: var(--dm-panel-solid);
@@ -1807,7 +1843,7 @@ onBeforeUnmount(() => {
 
 /* 顶栏分段按钮 36 → 40 px（电视点按目标；年 / 月 迷你分段不变） */
 .controls .seg:not(.seg--mini) button {
-  height: 40px;
+  height: max(40px, calc(40px / var(--ui-scale, 1))); /* 缩放后屏幕上仍 ≥ 40 px（1350 下原来只有 34） */
 }
 
 /* ---------- 侧栏 ---------- */
@@ -2214,6 +2250,83 @@ onBeforeUnmount(() => {
     outline-offset: 2px;
   }
 }
+/* 巡航开关：图标 + 「巡航」+ 小拨杆；开 = 强调色边框 / 拨杆在右且填色，关 = 灰拨杆在左、文字降一级。常显，不靠悬停 */
+.tour-tg {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: max(40px, calc(40px / var(--ui-scale, 1)));
+  padding: 0 10px 0 10px;
+  font: inherit;
+  font-size: 13px;
+  color: var(--dm-text-3);
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid var(--dm-line);
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+  &__label {
+    white-space: nowrap;
+  }
+  &__track {
+    position: relative;
+    width: 30px;
+    height: 18px;
+    flex: none;
+    border-radius: 9px;
+    background: rgba(255, 255, 255, 0.16);
+    transition: background 0.2s;
+    i {
+      position: absolute;
+      top: 3px;
+      left: 3px;
+      width: 12px;
+      height: 12px;
+      border-radius: 50%;
+      background: var(--dm-text-3);
+      transition: transform 0.2s, background 0.2s;
+    }
+  }
+  &:hover,
+  &:focus-visible {
+    background: rgba(255, 255, 255, 0.12);
+    border-color: var(--dm-accent);
+  }
+  &:focus-visible {
+    outline: 2px solid var(--dm-accent);
+    outline-offset: 2px;
+  }
+  &.on {
+    color: var(--dm-text);
+    border-color: var(--dm-accent);
+    background: rgba(53, 212, 255, 0.1);
+    svg {
+      color: var(--dm-accent);
+    }
+    .tour-tg__track {
+      background: var(--dm-accent);
+      i {
+        transform: translateX(12px);
+        background: #04121f;
+      }
+    }
+  }
+  /* 巡览进行中：拨杆圆点呼吸（与 HUD 胶囊同节奏） */
+  &.running .tour-tg__track i {
+    animation: tour-tg-breathe 1.6s ease-in-out infinite;
+  }
+  &::after {
+    content: '';
+    position: absolute;
+    inset: -3px;
+  }
+}
+@keyframes tour-tg-breathe {
+  50% {
+    opacity: 0.45;
+  }
+}
 .tour-chip {
   position: absolute;
   top: 108px;
@@ -2282,8 +2395,13 @@ onBeforeUnmount(() => {
   opacity: 0;
 }
 @media (prefers-reduced-motion: reduce) {
-  .tour-chip__dot {
+  .tour-chip__dot,
+  .tour-tg.running .tour-tg__track i {
     animation: none;
+  }
+  .tour-tg__track,
+  .tour-tg__track i {
+    transition: none;
   }
   .tour-chip__labels > span {
     transition: none;
