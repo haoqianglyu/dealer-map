@@ -800,6 +800,9 @@ const tourOn = computed(() => tour.enabled.value)
 // 顶栏开关：写 dm_tour（持久）；关掉时巡览中立即退出（按下那一刻的 pointerdown 已先退出，这里再兜底键盘 / 程序触发）
 function toggleTour() {
   const v = !tour.enabled.value
+  // 人动过开关：?tour=now 的「首批就绪即开始」作废（否则关→开后它绕过 120 s 直接开讲）
+  clearTimeout(tourNowTimer)
+  tourNowTimer = 0
   tour.setEnabled(v)
   saveTourPref(v, typeof localStorage === 'undefined' ? null : localStorage)
 }
