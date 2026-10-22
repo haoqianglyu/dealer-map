@@ -82,6 +82,10 @@
           <div class="user" :title="`${userName}（${scopeHint}）`">
             <span class="user__name">{{ userName || '…' }}</span>
           </div>
+          <div class="seg seg--theme" role="group" aria-label="主题">
+            <button :class="{ on: theme === 'dark' }" :aria-pressed="theme === 'dark'" @click="setTheme('dark')">深色</button>
+            <button :class="{ on: theme === 'light' }" :aria-pressed="theme === 'light'" @click="setTheme('light')">亮色</button>
+          </div>
           <button class="logout" title="退出登录" aria-label="退出登录" @click="logout">
             <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M10 4H5a1 1 0 0 0-1 1v14a1 1 0 0 0 1 1h5M15 8l4 4-4 4M19 12H9" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" /></svg>
             <span>退出</span>
@@ -211,6 +215,7 @@ import { applyOnline, groupsOnlineStats, createOnlineTracker, sane } from '@/geo
 import { fmtNumber, fmtArea } from '@/utils/format'
 import { tooltipStyle, categoryAxis, valueAxis } from '@/utils/chartTheme'
 import { vMarquee, alarmText } from '@/directives/marquee'
+import { theme, setTheme } from '@/composables/useTheme'
 
 const helpOpen = ref(false) // 图例「?」点按/遥控确认键展开（电视无悬停）
 
@@ -888,6 +893,35 @@ onBeforeUnmount(() => {
 </script>
 
 <style scoped lang="scss">
+/* ---------- 亮色主题（docs/fable-light-theme.md §2.3）：只加覆盖，深色规则不动 ---------- */
+:root[data-theme='light'] {
+  .topbar {
+    background: linear-gradient(180deg, rgba(238, 242, 246, 0.97) 0, rgba(238, 242, 246, 0.94) 72px, rgba(238, 242, 246, 0) 96px);
+  }
+  .seg {
+    background: rgba(16, 33, 58, 0.06);
+    button:hover:not(.on) {
+      color: var(--dm-text);
+      background: rgba(16, 33, 58, 0.06);
+    }
+    button.on {
+      color: #fff;
+    }
+    button.on:focus-visible {
+      outline: none;
+      box-shadow: 0 0 0 2px #fff, 0 0 0 4px var(--dm-focus);
+    }
+  }
+  .logout {
+    color: var(--dm-text);
+    background: rgba(16, 33, 58, 0.04);
+    border-color: rgba(16, 33, 58, 0.14);
+    &:hover,
+    &:focus-visible {
+      background: rgba(16, 33, 58, 0.08);
+    }
+  }
+}
 .screen {
   position: relative;
   width: 100vw;

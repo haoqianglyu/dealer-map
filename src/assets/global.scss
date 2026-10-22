@@ -28,12 +28,45 @@
   --dm-alarm: #ff4d4f;
   --dm-offline: #8a9bb3; /* 离线灰：与图例同色；浅色主题 #6b7a90 */
   --dm-heat-halo: #ffb857;
+  --dm-normal: #00d4ff;
+  --dm-notice: #5b8ff9;
   --dm-font: 'PingFang SC', 'Microsoft YaHei', 'Noto Sans SC', 'Helvetica Neue', Arial, sans-serif;
   --dm-num: 'DM Num', 'DIN Alternate', 'Bahnschrift', var(--dm-font);
 }
-/* 浅色主题（尚未启用）：离线灰降饱和 / 对比度，低于「正常」色，且避开高德浅色路网灰 */
+/* 亮色主题（docs/fable-light-theme.md §2）：新 token 只在亮色里定义，深色走原硬编码 / 回退值（零变化） */
 :root[data-theme='light'] {
-  --dm-offline: #6b7a90;
+  --dm-bg: #eef2f6;
+  --dm-panel: rgba(255, 255, 255, 0.86);
+  --dm-panel-solid: rgba(255, 255, 255, 0.94);
+  --dm-line: rgba(16, 33, 58, 0.1);
+  --dm-line-2: rgba(16, 33, 58, 0.08);
+  --dm-shadow: 0 4px 16px rgba(16, 33, 58, 0.08), 0 1px 2px rgba(16, 33, 58, 0.06);
+  --dm-shadow-pop: 0 12px 32px rgba(16, 33, 58, 0.18);
+  --dm-text: #10213a;
+  --dm-text-2: #3b4f6b;
+  --dm-text-3: #5b6b80;
+  --dm-accent: #0e7490;
+  --dm-accent-text-on: #ffffff;
+  --dm-hover: rgba(14, 116, 144, 0.08);
+  --dm-focus: #0e7490;
+  --dm-logo-filter: none;
+  --dm-logo-opacity: 1;
+  --dm-alarm: #d7263d;
+  --dm-alarm-text: #b42318;
+  --dm-warn: #a16207;
+  --dm-warn-text: #8a5200;
+  --dm-ok: #0f8a5f;
+  --dm-normal: #0e7490;
+  --dm-notice: #3b6fd6;
+  --dm-heat-halo: #c48a2e;
+  --dm-page-bg: #eef2f6;
+  --dm-panel-bg: #ffffff;
+  --dm-panel-border: rgba(16, 33, 58, 0.12);
+  --dm-text-muted: #5b6b80;
+  --dm-input-bg: #ffffff;
+  --dm-popover-bg: rgba(255, 255, 255, 0.98);
+  --dm-accent-line: rgba(14, 116, 144, 0.45);
+  --dm-offline: #65758b;
   --dm-offline-fill: 8%;
   --dm-offline-name: #5b6b80;
 }
@@ -51,6 +84,19 @@ body,
   height: 100%;
   overflow: hidden;
   background: #040b18;
+}
+:root[data-theme='light'] {
+  &,
+  body,
+  #app {
+    background: #eef2f6;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: rgba(16, 33, 58, 0.5);
+  }
+  :focus-visible {
+    outline-color: #0e7490;
+  }
 }
 
 body {

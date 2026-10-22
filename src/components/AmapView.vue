@@ -5,6 +5,7 @@
 <script setup>
 import { ref, watch, onMounted, onBeforeUnmount, onActivated, nextTick } from 'vue'
 import { createWarmLights } from './warmLights'
+import { theme, mapStyleFor } from '@/composables/useTheme'
 import { showName } from '@/utils/showroom'
 import { mountMarquee, alarmText } from '@/directives/marquee'
 import CONTEXT_CITIES from '@/data/cities-context.json'
@@ -37,7 +38,8 @@ const props = defineProps({
 })
 const emit = defineEmits(['open-project', 'district-tap', 'ready'])
 
-const MAP_STYLE = 'amap://styles/darkblue' // 老板要藏青底色（dark 是灰色）；darkblue 在 13–16 级路名较少，暂接受
+// 深色 darkblue；亮色 whitesmoke（?basemap= 可换 light / grey 对比）。
+const MAP_STYLE = () => mapStyleFor(theme.value) // 老板要藏青底色（dark 是灰色）；darkblue 在 13–16 级路名较少，暂接受
 const el = ref(null)
 let map = null
 let heat = null
@@ -941,7 +943,7 @@ onMounted(() => {
     viewMode: '2D',
     zoom: 10.5,
     center: props.center || undefined,
-    mapStyle: MAP_STYLE,
+    mapStyle: MAP_STYLE(),
   })
   if (import.meta.env.DEV) {
     window.__dmMap = map // 开发环境：验证脚本读取缩放级别
@@ -1010,6 +1012,14 @@ watch(
     render(false)
   }
 )
+// 主题切换：运行时换底图（不刷新、不动视野 / 弹窗）；换样式后高德会重置 features，重新下发
+watch(theme, () => {
+  if (!map) return
+  map.setMapStyle(MAP_STYLE())
+  featuresNow = ''
+  applyFeatures()
+  renderHeat()
+})
 // 告警聚焦：直接到最细一级（16），找到包含该小区的项（单小区或终态簇），打开它的弹窗
 function focusCommunity(key) {
   const c = props.communities.find((x) => x.key === key)

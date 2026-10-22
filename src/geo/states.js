@@ -1,10 +1,10 @@
 // 项目运行状态（为后续接入告警预留）：normal / offline / warning / alarm
 // 小区/区县标记的颜色 = 其下项目的「最严重」状态；告警数显示为红色角标。
 export const STATES = {
-  alarm: { label: '告警', color: '#ff4d4f', rank: 3 },
-  warning: { label: '预警', color: '#ffc722', rank: 2 },
-  offline: { label: '离线', color: '#8a9bb3', rank: 1 },
-  normal: { label: '正常', color: '#00d4ff', rank: 0 },
+  alarm: { label: '告警', color: 'var(--dm-alarm)', rank: 3 },
+  warning: { label: '预警', color: 'var(--dm-warn)', rank: 2 },
+  offline: { label: '离线', color: 'var(--dm-offline)', rank: 1 },
+  normal: { label: '正常', color: 'var(--dm-normal)', rank: 0 },
 }
 
 export const stateRank = (s) => STATES[s]?.rank ?? 0
@@ -20,7 +20,7 @@ export const hasNewAlarm = (projects) => projects.some((p) => p.state === 'alarm
 
 // 告警等级 → 状态：1 = alarm（红）、2 = warning（黄）、≥3 = notice（只在弹窗里计数，不改变标记颜色）
 export const levelState = (level) => (level === 1 ? 'alarm' : level === 2 ? 'warning' : 'notice')
-export const NOTICE_COLOR = '#5b8ff9'
+export const NOTICE_COLOR = 'var(--dm-notice)' // CSS 变量：只写进内联样式（深 / 亮主题各自取值）
 // 告警状态（平台）：status 1 未处理、2 处理中、3 已处理；end_timestamp 有值 = 故障已恢复。
 // 进行中 = 未处理或处理中（status 1 / 2）且未恢复；只有进行中的告警决定标记颜色
 export const isActiveAlarm = (a) => (a.status === 1 || a.status === 2) && !a.end
