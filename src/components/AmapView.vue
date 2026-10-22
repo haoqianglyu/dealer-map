@@ -287,8 +287,10 @@ function popParts(html) {
     foot: root.querySelector('.dm-pop__all')?.outerHTML || '',
   }
 }
-function openPopover(c, keep = false) {
+// by：谁打开的（'user' | 'tour'）——巡览只关自己开的弹窗，人开着的弹窗把空闲阈值抬到 5 倍（docs/fable-autotour.md §1.1）
+function openPopover(c, keep = false, by = 'user') {
   if (!keep || !pop || pop.c.key !== c.key) pop = { c, all: false, toggled: new Set(), more: new Set(), gopen: new Set(c.focusKey ? [c.focusKey] : []) }
+  pop.by = by
   clearPopMq()
   const html = popoverHtml()
   pop.html = html
@@ -383,9 +385,17 @@ function boundsOf(points) {
   return new props.AMap.Bounds([Math.min(...lngs), Math.min(...lats)], [Math.max(...lngs), Math.max(...lats)])
 }
 // 适配视野（允许小数级缩放；高德 setBounds 会向下取整一级，城市视图显得过远）
-function fitBounds(bounds, pad, city = false) {
+// 屏幕像素偏移 → 目标缩放级别下的经纬度偏移（Web 墨卡托；纬向按该纬度的余弦近似，偏移只有几百像素）
+const degPerPxAt = (z) => 360 / (256 * Math.pow(2, z))
+// 把「内容中心应落在留白区中心」折算进地图中心：等价于 setZoomAndCenter(z, c) 之后 panBy(-(r−l)/2, -(b−t)/2)，但一次到位（可做动画）
+function shiftCenter(c, z, pad) {
+  const [top, right, bottom, left] = pad
+  const d = degPerPxAt(z)
+  return [c[0] + ((right - left) / 2) * d, c[1] - ((bottom - top) / 2) * d * Math.cos((c[1] * Math.PI) / 180)]
+}
+// 适配视野的目标：{ zoom, center }（含侧栏 / 顶栏偏移）。fitBounds（瞬时）与 flyCity / flyDistrict（动画）共用。minZoom：下限（区县至少到簇级）
+function fitTarget(bounds, pad, minZoom = 0) {
   // 自己算：高德 setBounds / getFitZoomAndCenterByBounds 在大留白时会多缩小一级且不居中
-  stopPan() // 新的适配 / 区县放大优先：停掉还没走完的弹窗避让平移，否则它会把中心拉回旧位置
   const sw = bounds.getSouthWest()
   const ne = bounds.getNorthEast()
   const [top, right, bottom, left] = pad
@@ -397,22 +407,29 @@ function fitBounds(bounds, pad, city = false) {
   const spanX = Math.max(1, (ne.lng - sw.lng) * mPerDegLat * Math.cos((lat * Math.PI) / 180))
   const spanY = Math.max(1, (ne.lat - sw.lat) * mPerDegLat)
   const res = Math.max(spanX / w, spanY / h, 2) // 米/像素
-  const zoom = Math.min(17, Math.max(3, Math.log2((156543.03 * Math.cos((lat * Math.PI) / 180)) / res)))
-  if (city) fitZoom = zoom
-  map.setZoomAndCenter(zoom, [(sw.lng + ne.lng) / 2, lat], true)
-  map.panBy((right - left) / -2, (bottom - top) / -2)
+  const zoom = Math.max(minZoom, Math.min(17, Math.max(3, Math.log2((156543.03 * Math.cos((lat * Math.PI) / 180)) / res))))
+  return { zoom, center: shiftCenter([(sw.lng + ne.lng) / 2, lat], zoom, pad) }
+}
+function fitBounds(bounds, pad, city = false) {
+  stopPan() // 新的适配 / 区县放大优先：停掉还没走完的弹窗避让平移，否则它会把中心拉回旧位置
+  const t = fitTarget(bounds, pad)
+  if (city) fitZoom = t.zoom
+  map.setZoomAndCenter(t.zoom, t.center, true)
 }
 
 // 点击区县：缩放到该区小区的「主体」范围（至少到簇级）
 // 先只留区县中心附近的小区（个别小区按名称前缀在全市范围定位），再丢掉离主体很远的离群点（mainMass：
 // > 3 × 中位距离 + 5–95 分位外框），视野不会被一两个远点拉得偏到一侧；离群点平移仍可到达
-function zoomTo(points, center) {
-  stopPan()
+function districtPoints(points, center) {
   if (center) {
     const near = points.filter((p) => Math.abs(p[0] - center[0]) < 0.35 && Math.abs(p[1] - center[1]) < 0.3)
     if (near.length) points = near
   }
-  points = mainMass(points)
+  return mainMass(points)
+}
+function zoomTo(points, center) {
+  stopPan()
+  points = districtPoints(points, center)
   if (!points?.length) {
     // 该区还没有已定位的小区：放大到簇级的区县中心（至少有反馈）
     if (center) map.setZoomAndCenter(Math.max(map.getZoom(), zoomCluster() + 0.5), center, false, 350)
@@ -637,8 +654,8 @@ function onItemTap(it) {
   if (ez <= ZOOM_TERMINAL) return zoomInto(it.lnglat, ez)
   openGroup(it)
 }
-function openGroup(it, focusKey = null) {
-  openPopover(groupContent(it, focusKey))
+function openGroup(it, focusKey = null, by = 'user') {
+  openPopover(groupContent(it, focusKey), false, by)
 }
 function groupContent(it, focusKey = null) {
   const members = membersOf(indexes, it)
@@ -1109,6 +1126,74 @@ watch(
     onZoom() // 分界随城市视野变了：即使缩放级别没变也重判层级
   }
 )
+
+// ---------- 展厅巡览（docs/fable-autotour.md §4 / §8）：只在替人「点」，不新建标记、不重建索引 ----------
+// 唯一的动画 API：setZoomAndCenter(z, c, false, ms)；prefers-reduced-motion → 瞬时（第三参 true）
+const SETTLE_MS = 100
+const flyMs = (ms) => (reducedMotion() ? 0 : ms)
+function flyTo(t, ms) {
+  stopPan()
+  const d = flyMs(ms)
+  if (d) map.setZoomAndCenter(t.zoom, t.center, false, d)
+  else map.setZoomAndCenter(t.zoom, t.center, true)
+  return new Promise((r) => setTimeout(r, d + SETTLE_MS))
+}
+const near = (t) => {
+  const c = map.getCenter()
+  const tol = degPerPxAt(t.zoom) * 2
+  return Math.abs(map.getZoom() - t.zoom) < 0.02 && Math.abs(c.lng - t.center[0]) < tol && Math.abs(c.lat - t.center[1]) < tol
+}
+// 城市视野：与 fitCity → fitBounds(…, padding(40), true) 同一算法（同一组点 = 最近一次 fit）；已在城市视野时不飞
+function flyCity(ms = 900) {
+  const pts = props.fit?.points
+  if (!map || !pts?.length) return Promise.resolve(false)
+  const t = fitTarget(boundsOf(pts), padding(40))
+  fitZoom = t.zoom
+  if (near(t)) return Promise.resolve(true)
+  return flyTo(t, ms).then(() => true)
+}
+// 区县：zoomTo 的同一套点集（near + mainMass），fitBounds(padding(60)) 的结果改成动画；下限簇级
+function districtTarget(d) {
+  const pts = districtPoints(d.points || [], d.lnglat)
+  if (!pts?.length) return d.lnglat ? { zoom: Math.max(map.getZoom(), zoomCluster() + 0.5), center: d.lnglat } : null
+  if (pts.length === 1) return { zoom: 15, center: pts[0] }
+  return fitTarget(boundsOf(pts), padding(60), zoomCluster())
+}
+function flyDistrict(key, ms = 900) {
+  const d = map && props.districts.find((x) => x.key === key)
+  const t = d && districtTarget(d)
+  if (!t) return Promise.resolve(false)
+  return flyTo(t, ms).then(() => true)
+}
+// 小区：z16，中心向左让出侧栏；到达后走 focusCommunity 的后半段（找项 → 分组 / 单小区弹窗），不再 setCenter。
+// alive()：调用方的作废检查（人一碰屏幕，900 ms 后的「开弹窗」就不该发生）
+function flyCommunity(key, { ms = 900, by = 'tour', alive = () => true } = {}) {
+  const c = props.communities.find((x) => x.key === key)
+  if (!c || !map || props.mode === 'heat') return Promise.resolve(false)
+  const z = ZOOM_TERMINAL
+  const dx = (props.avoid.right - props.avoid.left) / 2
+  return flyTo({ zoom: z, center: [c.lnglat[0] + dx * degPerPxAt(z), c.lnglat[1]] }, ms).then(() => {
+    if (!alive() || !map || props.mode === 'heat') return false
+    if (!indexes || !indexes.byKey.has(key)) rebuildIndexes()
+    onZoom() // 动画结束时 zoomend 已重画过；同级重算按 id 增量，不变的不动
+    const it = lastItems.find((i) => i.key === key) || lastItems.find((i) => i.clusterId != null && membersOf(indexes, i).some((m) => m.key === key))
+    if (it && it.clusterId != null) openGroup(it, key, by)
+    else openPopover(c, false, by)
+    return true
+  })
+}
+// onlyIf：只关指定来源打开的弹窗（巡览退出时不关人开的）
+function closePop({ onlyIf = null } = {}) {
+  if (!pop || !info) return
+  if (onlyIf && pop.by !== onlyIf) return
+  info.close()
+}
+const popOpenedBy = () => pop?.by ?? null
+// 人在巡览弹窗上点了一下：弹窗归他（之后巡览不再关它）
+function claimPop() {
+  if (pop) pop.by = 'user'
+}
+defineExpose({ flyCity, flyDistrict, flyCommunity, closePop, popOpenedBy, claimPop })
 
 // keep-alive：回到地图页时让高德重新量一次容器，关掉旧弹窗
 onActivated(() =>
