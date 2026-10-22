@@ -126,8 +126,8 @@ test('P1-1 layoutLabels：同级相撞先试外挂名字；终态不留无名圆
   assert.ok(l.get('A').side || l.get('B').side, '至少一个外挂')
   // 终态：右 / 左都被挡时试下 / 上
   const c = { id: 'C', x: 300, y: 300, n: 2, k: 1, rank: 0, alarms: 0, top: '湖玺庄园' }
-  const L = { id: 'L', x: 220, y: 300, n: 30, k: 1, rank: 3, alarms: 2, top: '左边大的' }
-  const R = { id: 'R', x: 380, y: 300, n: 30, k: 1, rank: 3, alarms: 2, top: '右边大的' }
+  const L = { id: 'L', x: 200, y: 300, n: 30, k: 1, rank: 3, alarms: 2, top: '左边大的' }
+  const R = { id: 'R', x: 400, y: 300, n: 30, k: 1, rank: 3, alarms: 2, top: '右边大的' }
   const t = layoutLabels([c, L, R], 'terminal')
   assert.ok(t.get('C').named || t.get('C').side, `terminal C named ${JSON.stringify(t.get('C'))}`)
   // 圈相交（supercluster 簇坐标是成员均值，两圈可能相交）：低优先级的降级为小点
