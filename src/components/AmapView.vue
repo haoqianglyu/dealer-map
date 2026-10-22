@@ -1030,9 +1030,11 @@ function watchStyleTiles() {
       resolve()
     }
     const cap = setTimeout(done, 700)
+    const t0 = performance.now() // 只认这次换样式之后发起的请求（连点时上一次还在途的 get_tile 不算）
     try {
       po = new PerformanceObserver((list) => {
         for (const e of list.getEntries()) {
+          if (e.startTime < t0) continue
           if (/\/get_tile\b/.test(e.name)) return done()
           if (/getMergedStyleData/.test(e.name)) {
             clearTimeout(t)
