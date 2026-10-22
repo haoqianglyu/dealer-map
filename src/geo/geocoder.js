@@ -5,7 +5,7 @@
 // 缓存 key = 归一化查询串（市+区+小区）；已确认永久缓存，未确认缓存 7 天（高德「基础搜索」月配额仅 5000 次），
 // 「重新定位待校正」按钮可强制重查。只存坐标/匹配级别/高德返回的名称地址，不存任何项目/客户信息。
 
-const CACHE_VERSION = 'v7'
+const CACHE_VERSION = 'v8' // v8：小区名归一化规则 v2（NORMALIZE_VERSION）
 const CACHE_KEY = `dealer-map:geo:${CACHE_VERSION}`
 const FAIL_TTL = 7 * 24 * 3600 * 1000
 
