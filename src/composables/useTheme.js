@@ -26,7 +26,7 @@ function apply(t) {
   const html = document.documentElement
   if (t === 'light') html.dataset.theme = 'light'
   else delete html.dataset.theme
-  html.style.colorScheme = t
+  html.style.colorScheme = t === 'light' ? 'light' : '' // 深色保持未设置（原生控件与改前一致）
   const meta = document.querySelector('meta[name=theme-color]')
   if (meta) meta.content = t === 'light' ? '#eef2f6' : '#040b18'
 }
