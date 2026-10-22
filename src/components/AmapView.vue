@@ -9,7 +9,7 @@ import { showName } from '@/utils/showroom'
 import { mountMarquee, alarmText } from '@/directives/marquee'
 import CONTEXT_CITIES from '@/data/cities-context.json'
 import { STATES, stateRank, worstState, alarmCount, hasNewAlarm, levelState, isActiveAlarm, NOTICE_COLOR } from '@/geo/states'
-import { buildIndexes, query, membersOf, expansionZoom, layoutLabels, circleSize, circleFont, zoomClusterFor, levelFor as levelAt, byPriority, ZOOM_TERMINAL, textWidth, mainMass, leafIndex, anyLeafKey, queryZoom } from '@/geo/cluster'
+import { buildIndexes, query, membersOf, expansionZoom, layoutLabels, circleSize, circleFont, zoomClusterFor, levelFor as levelAt, byPriority, ZOOM_TERMINAL, textWidth, mainMass, leafIndex, anyLeafKey, queryZoom, DOT_SIZE } from '@/geo/cluster'
 import { fmtNumber } from '@/utils/format'
 
 // 高德地图：自定义 HTML 标记 + 暖光热力。标记四个层级（docs/fable-clustering.md）：
@@ -144,13 +144,19 @@ function districtHtml(d, fit = 1, side = 'below') {
 }
 // ②③④ 簇 / 小区：lay = layoutLabels 的结果 { named, label, sub }
 function itemHtml(it, lay) {
+  if (lay.dot) {
+    // 被更高优先级的胶囊 / 圈压住：小点，无数字 / 角标（点击仍是它自己）
+    return hitBox(`<div class="dm-mk dm-mk--dot dm-mk--${it.state}" style="--size:${DOT_SIZE}px;--c:${STATES[it.state].color}"></div>`)
+  }
   const S = circleSize(it.n)
   const cls = ['dm-mk', `dm-mk--${it.state}`, lay.named ? 'dm-mk--named' : '', it.k > 1 ? 'dm-mk--cluster' : '', it.pulse ? 'dm-mk--pulse' : ''].join(' ')
   const label = lay.named
     ? `<span class="dm-mk__label">${esc(lay.label)}${lay.sub ? `<small>${esc(lay.sub)}</small>` : ''}</span>`
-    : lay.label
-      ? `<span class="dm-mk__label dm-mk__label--sub">${esc(lay.label)}</span>`
-      : ''
+    : lay.side
+      ? `<span class="dm-mk__label dm-mk__label--side dm-mk__label--${lay.side}">${esc(lay.label)}${lay.sub ? `<small>${esc(lay.sub)}</small>` : ''}</span>`
+      : lay.label
+        ? `<span class="dm-mk__label dm-mk__label--sub">${esc(lay.label)}</span>`
+        : ''
   return hitBox(`<div class="${cls}" style="--size:${S}px;--fs:${circleFont(S)}px;--c:${STATES[it.state].color}">
     <span class="dm-mk__n">${fmtNumber(it.n)}</span>${badgeHtml(it.alarms)}${label}
   </div>`)
@@ -331,7 +337,9 @@ function avoidUi() {
   let dy = 0
   if (r.right > box.right - a.right) dx = box.right - a.right - r.right - 12
   if (r.left + dx < box.left + a.left) dx = box.left + a.left - r.left + 12
-  if (r.top < box.top + a.top) dy = box.top + a.top - r.top + 12
+  // 顶边至少 108 px（顶栏渐变 96 px + 12 px 间隙；缩放 < 1 时 a.top 会小于 96，弹窗会贴到时钟）
+  const top = Math.max(a.top, 96) + 12
+  if (r.top < box.top + top) dy = box.top + top - r.top
   else if (r.bottom > box.bottom - a.bottom) dy = box.bottom - a.bottom - r.bottom - 12
   if (Math.abs(dx) >= 1 || Math.abs(dy) >= 1) quickPan(dx, dy)
 }
@@ -502,6 +510,8 @@ function leave(rs, animate) {
       continue
     }
     n.style.pointerEvents = 'none'
+    // 角标 / 名字立即隐去，只有圆淡出：拆分时不会同屏出现两份「1 告警」
+    for (const t of n.querySelectorAll('.dm-mk__badge, .dm-mk__label')) t.style.visibility = 'hidden'
     r.marker.setzIndex(110) // 退场的压在新项下面
     fading.add(r.marker)
     n.animate([{ opacity: 1 }, { opacity: 0 }], { duration: FADE_MS, easing: 'ease-in', fill: 'forwards' }).onfinish = () => {
@@ -593,13 +603,24 @@ function onItemTap(it) {
 function openGroup(it, focusKey = null) {
   const members = membersOf(indexes, it)
   const dists = [...new Set(members.map((m) => m.districtName).filter(Boolean))]
+  // 兜底：同名的成员（归一化没能合并的同一个小区）并成一组，组头不会出现两个「湖玺庄园」
+  const byLabel = new Map()
+  for (const m of members) {
+    const g = byLabel.get(m.label)
+    if (!g) byLabel.set(m.label, { ...m, projects: [...m.projects] })
+    else {
+      g.projects.push(...m.projects)
+      if (m.key === focusKey) g.key = focusKey
+    }
+  }
+  const groups = [...byLabel.values()]
   openPopover({
     key: it.id,
     lnglat: it.lnglat,
-    label: `${it.top} 等 ${members.length} 小区`,
+    label: groups.length > 1 ? `${it.top} 等 ${groups.length} 小区` : groups[0]?.label || it.top,
     districtName: dists.join(' / '),
     projects: members.flatMap((m) => m.projects),
-    groups: members,
+    groups,
     focusKey,
   })
 }
@@ -692,7 +713,7 @@ function renderMarkers(animate = true) {
       it,
       lnglat: it.lnglat,
       html: itemHtml(it, lay.get(it.id)),
-      z: 120 + it.rank * 2 + (it.k > 1 ? 1 : 0),
+      z: lay.get(it.id).dot ? 112 : 120 + it.rank * 2 + (it.k > 1 ? 1 : 0),
       tap: () => onItemTap(it),
     })),
     anim
@@ -980,6 +1001,8 @@ onBeforeUnmount(() => {
 }
 
 .dm-hit {
+  user-select: none;
+  -webkit-user-select: none;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1098,6 +1121,35 @@ onBeforeUnmount(() => {
   font-size: calc(12px * var(--k, 1));
   color: #b7d3f0;
 }
+/* 名字外挂：胶囊放不下时圆不动、名字放在圆右 / 左 / 下 / 上（与区县名同一套） */
+.dm-mk .dm-mk__label--side {
+  font-size: calc(13px * var(--k, 1));
+  color: #e8f4ff;
+}
+.dm-mk .dm-mk__label--side small {
+  margin-left: calc(4px * var(--k, 1));
+  font-size: calc(11px * var(--k, 1));
+  color: #9fc0e0;
+}
+.dm-mk .dm-mk__label--right,
+.dm-mk .dm-mk__label--left {
+  top: 50%;
+  left: calc(100% + calc(5px * var(--k, 1)));
+  transform: translateY(-50%);
+}
+.dm-mk .dm-mk__label--left {
+  left: auto;
+  right: calc(100% + calc(5px * var(--k, 1)));
+}
+.dm-mk .dm-mk__label--above {
+  top: auto;
+  bottom: calc(100% + calc(5px * var(--k, 1)));
+}
+.dm-mk--dot {
+  border-width: calc(2px * var(--k, 1));
+  background: color-mix(in srgb, var(--c) 45%, rgba(4, 11, 24, 0.7));
+  box-shadow: none;
+}
 .dm-mk .dm-mk__label--sub {
   top: calc(100% + calc(3px * var(--k, 1)));
   font-size: calc(11px * var(--k, 1));
@@ -1181,6 +1233,8 @@ onBeforeUnmount(() => {
 /* ---------- 小区弹窗 ---------- */
 .dm-pop {
   position: relative;
+  user-select: none; /* 行 / 组头 / 「更多」都是点按目标 */
+  -webkit-user-select: none;
   width: calc(360px * var(--k, 1));
   font-size: calc(13px * var(--k, 1));
   color: #d8ecff;

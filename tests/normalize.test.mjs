@@ -228,3 +228,41 @@ test('alarmText 不重复设备名', async () => {
   assert.equal(alarmText('', '通讯故障'), '通讯故障')
   assert.equal(alarmText('主机', ''), '主机')
 })
+
+test('P1-2 开发商前缀：stripDeveloper；只有同区已有短名时才合并', async () => {
+  const { stripDeveloper, NORMALIZE_VERSION } = await import('../src/geo/normalize.js')
+  assert.equal(NORMALIZE_VERSION, 4)
+  assert.equal(stripDeveloper('路劲蠡湖院子'), '蠡湖院子')
+  assert.equal(stripDeveloper('万科翡翠东方'), '翡翠东方')
+  assert.equal(stripDeveloper('碧桂园紫宸'), '紫宸')
+  assert.equal(stripDeveloper('湖玺庄园'), '')
+  assert.equal(stripDeveloper('万科城'), '', '剩一个字不剥')
+  assert.equal(stripDeveloper('绿地二期'), '', '只剩分期不剥')
+})
+
+test('P1-2 mergeAliases：湖玺庄园 / 蠡湖院子 / 翡翠东方 各成一组；绿地香颂不变', async () => {
+  const { mergeAliases } = await import('../src/geo/normalize.js')
+  const NAMES = { 320211: '滨湖区' }
+  const dn = (c) => NAMES[c] || ''
+  const P = (id, community, extra = {}) => {
+    const geoDistrict = extra.geoDistrict ?? '320211'
+    const kws = extra.keywords || [community]
+    return { id, community, city: '320200', cityName: '无锡市', district: '320211', geoDistrict, keywords: kws, queries: kws.map((k) => geoQuery('无锡市', dn(geoDistrict), k)) }
+  }
+  const ps = mergeAliases(
+    [P('1', '湖玺庄园'), P('2', '湖玺庄园', { geoDistrict: '' }), P('3', '蠡湖院子'), P('4', '路劲蠡湖院子'), P('5', '翡翠东方', { keywords: ['翡翠东方', '万科翡翠东方'] }), P('6', '万科翡翠东方'), P('7', '绿地香颂'), P('8', '绿地香颂公馆')],
+    dn
+  )
+  const key = (p) => `${p.geoDistrict || p.city}|${p.community}`
+  const byId = Object.fromEntries(ps.map((p) => [p.id, p]))
+  assert.equal(key(byId[2]), '320211|湖玺庄园', '本市前缀（全市范围）并到所填区县的同名小区')
+  assert.equal(byId[4].community, '蠡湖院子')
+  assert.equal(byId[4].queries[0], '无锡市滨湖区路劲蠡湖院子', '原名查询串在前（缓存仍命中）')
+  assert.ok(byId[4].queries.includes('无锡市滨湖区蠡湖院子'))
+  assert.equal(byId[6].community, '翡翠东方')
+  assert.equal(byId[7].community, '绿地香颂')
+  assert.equal(byId[8].community, '绿地香颂公馆')
+  assert.equal(byId[1], ps[0], '未变化的项目原样返回')
+  const solo = mergeAliases([P('9', '万科翡翠东方')], dn)
+  assert.equal(solo[0].community, '万科翡翠东方', '没有短名小区时不合并')
+})

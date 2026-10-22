@@ -647,7 +647,7 @@ html.pd-noscroll body {
   color: var(--pd-muted);
 }
 .hbtn {
-  min-height: 44px;
+  min-height: max(44px, calc(40px / var(--ui-scale, 1))); /* 页面整体缩放后屏幕上仍 ≥ 40 px */
   padding: 10px 22px;
   font: inherit;
   font-size: max(15px, var(--pd-min-fs, 0px));

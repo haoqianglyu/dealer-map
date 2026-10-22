@@ -119,10 +119,14 @@ export function textWidth(s, size) {
 const hit = (a, b) => a.l < b.r && b.l < a.r && a.t < b.b && b.t < a.b
 const grow = (r, d) => ({ l: r.l - d, r: r.r + d, t: r.t - d, b: r.b + d })
 
-// 标签避让（§4.4）：items 已带屏幕坐标 x / y。返回每项的 { named, label }：
+// 标签避让（§4.4）：items 已带屏幕坐标 x / y。返回每项的 { named, label, sub?, side?, dot? }：
 //   cluster 级：多小区簇在圈下标「k 小区」，撞到其它圈或已放的标签就不标；单小区不标
-//   named / terminal 级：胶囊「n + 名字（+ 等 k 小区）」，撞到其它圈 / 胶囊 → 低优先级的退化为无名圆
+//   named / terminal 级（按优先级逐个放）：
+//     1. 胶囊「n + 名字（+ 等 k 小区）」；只与「更低优先级」的圈相交时保留名字，把那些圈降级为小点（dot）
+//     2. 胶囊撞到已放的（同级或更高）项 → 圆不动、名字外挂在圆右 / 左（终态再试下 / 上）
+//     3. 都撞 → 无名圆；圆本身压到已放的项 → 降级为小点（屏上不再有两圈相交）
 //   同一屏不出现两份相同文字
+export const DOT_SIZE = 12
 export function layoutLabels(items, level, k = 1) {
   const out = new Map()
   const circ = new Map()
@@ -133,14 +137,14 @@ export function layoutLabels(items, level, k = 1) {
   const placed = []
   const seen = new Set()
   const pad = 4 * k
-  const clear = (rect, selfId) => {
-    const g = grow(rect, pad)
-    for (const [id, c] of circ) if (id !== selfId && hit(g, c)) return false
-    return !placed.some((p) => hit(g, p))
-  }
-  for (const it of [...items].sort(byPriority)) {
-    const S = circleSize(it.n) * k
-    if (level === 'cluster') {
+  if (level === 'cluster') {
+    const clear = (rect, selfId) => {
+      const g = grow(rect, pad)
+      for (const [id, c] of circ) if (id !== selfId && hit(g, c)) return false
+      return !placed.some((p) => hit(g, p))
+    }
+    for (const it of [...items].sort(byPriority)) {
+      const S = circleSize(it.n) * k
       if (it.k < 2) {
         out.set(it.id, { named: false, label: '' })
         continue
@@ -154,18 +158,67 @@ export function layoutLabels(items, level, k = 1) {
         placed.push(rect)
         out.set(it.id, { named: false, label: text })
       } else out.set(it.id, { named: false, label: '' })
+    }
+    return out
+  }
+  const terminal = level === 'terminal'
+  const demoted = new Set()
+  const done = new Set()
+  const freeOfPlaced = (rects) => rects.every((r) => !placed.some((p) => hit(grow(r, pad), p)))
+  // 与之相交的、尚未放置（= 更低优先级）的圈
+  const lowerHits = (rects, selfId) => {
+    const ids = []
+    for (const [id, c] of circ) {
+      if (id === selfId || done.has(id) || demoted.has(id)) continue
+      if (rects.some((r) => hit(grow(r, pad), c))) ids.push(id)
+    }
+    return ids
+  }
+  for (const it of [...items].sort(byPriority)) {
+    const S = circleSize(it.n) * k
+    const C = circ.get(it.id)
+    done.add(it.id)
+    if (demoted.has(it.id) || !freeOfPlaced([grow(C, -pad)])) {
+      // 被更高优先级的胶囊 / 圈压住：只留一个小点（点击仍按自己的簇处理）
+      demoted.add(it.id)
+      const h = (DOT_SIZE * k) / 2
+      placed.push({ l: it.x - h, r: it.x + h, t: it.y - h, b: it.y + h })
+      out.set(it.id, { named: false, label: '', dot: true })
       continue
     }
     const name = it.top || '未识别小区'
-    const text = it.k > 1 ? `${name} 等 ${it.k} 小区` : name
+    const sub = it.k > 1 ? `等 ${it.k} 小区` : ''
+    const text = sub ? `${name} ${sub}` : name
+    const nameW = textWidth(name, 13) * k + (sub ? (textWidth(` ${sub}`, 11) + 4) * k : 0)
     const numW = Math.max(S - 12 * k, textWidth(String(it.n), 13) * k)
-    const w = 4 * k + numW + 6 * k + textWidth(name, 13) * k + (it.k > 1 ? (textWidth(` 等 ${it.k} 小区`, 11) + 4) * k : 0) + 10 * k + 8 * k // 右内边距 + 边框 4 + 字形余量 4
-    const rect = { l: it.x - w / 2, r: it.x + w / 2, t: it.y - S / 2, b: it.y + S / 2 }
-    if (!seen.has(text) && clear(rect, it.id)) {
-      placed.push(rect)
+    const w = 4 * k + numW + 6 * k + nameW + 10 * k + 8 * k // 右内边距 + 边框 4 + 字形余量 4
+    const cands = []
+    if (!seen.has(text)) {
+      cands.push({ kind: 'capsule', rects: [{ l: it.x - w / 2, r: it.x + w / 2, t: it.y - S / 2, b: it.y + S / 2 }] })
+      const lw = nameW + 6 * k
+      const lh = 16 * k
+      const gap = 5 * k
+      const side = (s) => {
+        if (s === 'right') return { l: C.r + gap, r: C.r + gap + lw, t: it.y - lh / 2, b: it.y + lh / 2 }
+        if (s === 'left') return { l: C.l - gap - lw, r: C.l - gap, t: it.y - lh / 2, b: it.y + lh / 2 }
+        if (s === 'below') return { l: it.x - lw / 2, r: it.x + lw / 2, t: C.b + gap, b: C.b + gap + lh }
+        return { l: it.x - lw / 2, r: it.x + lw / 2, t: C.t - gap - lh, b: C.t - gap }
+      }
+      for (const s of terminal ? ['right', 'left', 'below', 'above'] : ['right', 'left']) cands.push({ kind: 'side', side: s, rects: [C, side(s)] })
+    }
+    // 先找不压任何圈的位置；没有的话，胶囊 / 外挂名字可以压更低优先级的圈（把它们降级为小点）
+    const ok = cands.filter((c) => freeOfPlaced(c.rects))
+    const pick = ok.find((c) => !lowerHits(c.rects, it.id).length) || ok[0]
+    if (pick) {
+      for (const id of lowerHits(pick.rects, it.id)) demoted.add(id)
+      placed.push(...pick.rects)
       seen.add(text)
-      out.set(it.id, { named: true, label: name, sub: it.k > 1 ? `等 ${it.k} 小区` : '' })
-    } else out.set(it.id, { named: false, label: '' })
+      out.set(it.id, pick.kind === 'capsule' ? { named: true, label: name, sub } : { named: false, label: name, sub, side: pick.side })
+      continue
+    }
+    for (const id of lowerHits([C], it.id)) demoted.add(id)
+    placed.push(C)
+    out.set(it.id, { named: false, label: '' })
   }
   return out
 }

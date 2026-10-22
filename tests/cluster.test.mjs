@@ -107,9 +107,46 @@ test('标签避让：簇级只给多小区簇标「k 小区」，撞圈不标；
   assert.equal(l2.get('X').named, false)
   assert.equal(l2.get('Z').sub, '等 2 小区')
   assert.equal(l2.get('W').named, false, '同文本只出现一次')
-  // 胶囊会压住别的圈：两个都退化成圆（宁可不标名字也不互压）
-  const l3 = layoutLabels([caps[0], { ...caps[1], x: 140, y: 100 }], 'named')
-  assert.equal(l3.get('X').named || l3.get('Y').named, false)
+  // 高优先级（告警）的名字不被低优先级的小圈否决：低的降级为小点
+  const l3 = layoutLabels([caps[0], { ...caps[1], x: 120, y: 100 }], 'named')
+  assert.ok(l3.get('Y').named || l3.get('Y').side, '告警项保留名字')
+  assert.equal(l3.get('X').dot, true, '与之相交的低优先级圈 → 小点')
+  // 两圈不相交、胶囊放不下：名字外挂，两个都有名字
+  const l4 = layoutLabels([caps[0], { ...caps[1], x: 140, y: 100 }], 'named')
+  assert.ok(l4.get('Y').label && l4.get('X').label)
+})
+
+test('P1-1 layoutLabels：同级相撞先试外挂名字；终态不留无名圆；不出现两圈相交', async () => {
+  const { circleSize } = await import('../src/geo/cluster.js')
+  // 两个同优先级、斜挨着：胶囊放不下 → 名字外挂（宁可外挂也不把邻圈降级），两个都有名字
+  const a = { id: 'A', x: 200, y: 200, n: 4, k: 1, rank: 1, alarms: 0, top: '金科蠡湖' }
+  const b = { id: 'B', x: 260, y: 232, n: 3, k: 1, rank: 1, alarms: 0, top: '宝界山庄' }
+  const l = layoutLabels([a, b], 'named')
+  assert.ok(l.get('A').label && l.get('B').label, JSON.stringify([...l]))
+  assert.ok(l.get('A').side || l.get('B').side, '至少一个外挂')
+  // 终态：右 / 左都被挡时试下 / 上
+  const c = { id: 'C', x: 300, y: 300, n: 2, k: 1, rank: 0, alarms: 0, top: '湖玺庄园' }
+  const L = { id: 'L', x: 220, y: 300, n: 30, k: 1, rank: 3, alarms: 2, top: '左边大的' }
+  const R = { id: 'R', x: 380, y: 300, n: 30, k: 1, rank: 3, alarms: 2, top: '右边大的' }
+  const t = layoutLabels([c, L, R], 'terminal')
+  assert.ok(t.get('C').named || t.get('C').side, `terminal C named ${JSON.stringify(t.get('C'))}`)
+  // 圈相交（supercluster 簇坐标是成员均值，两圈可能相交）：低优先级的降级为小点
+  const big = { id: 'G', x: 100, y: 100, n: 38, k: 4, rank: 3, alarms: 1, top: '金科蠡湖' }
+  const small = { id: 'S', x: 80, y: 78, n: 1, k: 1, rank: 0, alarms: 0, top: '小' }
+  const o = layoutLabels([small, big], 'named')
+  assert.ok(o.get('G').named || o.get('G').side, '告警簇有名字')
+  assert.equal(o.get('S').dot, true)
+  // 随机场景：非小点的圈两两不相交
+  let seed = 3
+  const rnd = () => ((seed = (seed * 16807) % 2147483647) / 2147483647)
+  const items = Array.from({ length: 60 }, (_, i) => ({ id: `r${i}`, x: rnd() * 800, y: rnd() * 500, n: 1 + Math.floor(rnd() * 20), k: 1 + Math.floor(rnd() * 3), rank: Math.floor(rnd() * 4), alarms: Math.floor(rnd() * 2), top: `小区${i}` }))
+  const r = layoutLabels(items, 'terminal')
+  const vis = items.filter((it) => !r.get(it.id).dot)
+  for (let i = 0; i < vis.length; i++)
+    for (let j = i + 1; j < vis.length; j++) {
+      const d = Math.hypot(vis[i].x - vis[j].x, vis[i].y - vis[j].y)
+      assert.ok(d >= (circleSize(vis[i].n) + circleSize(vis[j].n)) / 2, `${vis[i].id}/${vis[j].id} overlap`)
+    }
 })
 
 test('区县放大：主体框丢掉远处离群点，集中时不误杀', async () => {

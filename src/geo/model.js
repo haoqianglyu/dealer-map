@@ -1,7 +1,7 @@
 import { parseRegion, regionInfo } from '@/utils/region'
 import { appTypeName } from '@/utils/format'
 import DISTRICTS from '@/data/districts.json'
-import { communityParts, geoQuery } from './normalize'
+import { communityParts, geoQuery, mergeAliases } from './normalize'
 
 // 状态是位掩码：1 已创建 | 2 已交付 | 4 已验收（/v1/project-statuses）
 export function statusName(status, delivered) {
@@ -74,3 +74,6 @@ export function toProject(raw) {
     distributorName: raw.distributor_name || '',
   }
 }
+
+// 同一个小区被归一化成两个 key 时合并（normalize.mergeAliases）
+export const mergeDeveloperAliases = (projects) => mergeAliases(projects, (code) => regionInfo(code)?.name)

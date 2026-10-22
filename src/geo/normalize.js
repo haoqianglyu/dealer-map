@@ -55,7 +55,7 @@ export function communityName(raw) {
 }
 
 // 规则版本：归一化结果变化会改变缓存 key（区县adcode|市+区+小区），改规则时递增，便于核对种子/共享缓存是否已按新规则重查
-export const NORMALIZE_VERSION = 3
+export const NORMALIZE_VERSION = 4 // v4：本市前缀不再扩大到全市范围；开发商前缀别名合并（stripDeveloper）
 
 function lineCommunity(raw) {
   let s = String(raw || '').replace(TRAD_RE, (c) => TRAD[c]).replace(PAREN_RE, '').replace(NOISE_RE, '').replace(PRODUCT_RE, '')
@@ -153,4 +153,44 @@ export function geoQuery(cityName, districtName, community) {
     for (const p of [n, short(n)]) if (p.length >= 2 && c.startsWith(p) && c.length - p.length >= 2) c = c.slice(p.length)
   }
   return `${cityName || ''}${districtName || ''}${c}`
+}
+
+// ---------- 开发商前缀 ----------
+// 「路劲蠡湖院子」与「蠡湖院子」、「万科翡翠东方」与「翡翠东方」是同一个小区：去掉开发商前缀后与同区已有小区名相同时合并（model.mergeDeveloperAliases）。
+// 只在「同区真有去前缀的那个名字」时才合并，「绿地香颂」不会单独变成「香颂」。
+export const DEVELOPERS = ['碧桂园', '保利', '万科', '融创', '金科', '绿地', '建发', '路劲', '中海', '华润', '招商', '龙湖', '世茂', '恒大', '雅居乐', '新城', '旭辉', '阳光城', '中南', '中梁', '美的', '金地', '绿城', '仁恒', '九龙仓', '朗诗', '弘阳', '雅戈尔', '越秀', '电建', '中铁', '首开', '远洋', '富力', '奥园', '时代', '蓝光', '协信', '宝龙', '新希望', '象屿', '国贸', '联发', '大华', '中冶', '五矿', '红豆']
+const DEV_RE = new RegExp(`^(?:${[...DEVELOPERS].sort((a, b) => b.length - a.length).join('|')})`)
+// → 去掉开发商前缀后的名字；没有前缀 / 剩下不足 2 字 / 只剩分期泛称时返回 ''
+export function stripDeveloper(name) {
+  const m = String(name || '').match(DEV_RE)
+  if (!m) return ''
+  const rest = name.slice(m[0].length)
+  return rest.length >= 2 && !PHASE_ONLY_RE.test(rest) && !GENERIC.has(rest) ? rest : ''
+}
+
+// 同一个小区被归一化成两个 key 时合并（终态弹窗里不会出现两个「湖玺庄园」）：
+//   1. 本市前缀：「无锡市湖玺庄园」填在滨湖区 → 按全市查（geoDistrict ''）；若所填区县里已有「湖玺庄园」，并到那一组
+//   2. 开发商前缀：同一地理范围里「路劲蠡湖院子」去掉开发商后等于已有小区「蠡湖院子」→ 归到「蠡湖院子」（小区名用短的）
+// 查询串保留原名在前（已有的缓存 / 种子仍命中），再补上新名。只在「另一个名字真的存在」时合并，「绿地香颂」不会变成「香颂」。
+// districtName(adcode) → 区县名（拼查询串用）。返回新数组（变化的项目是新对象，不改原对象）。
+export function mergeAliases(projects, districtName = () => '') {
+  const scope = (p) => p.geoDistrict || p.city
+  const names = new Set()
+  for (const p of projects) if (p.community) names.add(`${scope(p)}|${p.community}`)
+  let changed = false
+  const out = projects.map((p) => {
+    if (!p.community) return p
+    let q = p
+    if (!p.geoDistrict && p.district && p.district.startsWith(p.city.slice(0, 4)) && names.has(`${p.district}|${p.community}`)) {
+      q = { ...q, geoDistrict: p.district, geoCity: p.district, aliasOf: p.community }
+    }
+    const base = stripDeveloper(q.community)
+    if (base && names.has(`${scope(q)}|${base}`)) q = { ...q, community: base, aliasOf: q.community }
+    if (q === p) return p
+    changed = true
+    const query = geoQuery(q.cityName, districtName(q.geoDistrict), q.community)
+    if (!q.queries.includes(query)) q = { ...q, queries: [...q.queries, query], keywords: [...q.keywords, q.community] }
+    return q
+  })
+  return changed ? out : projects
 }

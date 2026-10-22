@@ -201,7 +201,7 @@ import FallbackMap from '@/components/FallbackMap.vue'
 import { listAlarms, me, getDistributor, pickProjectEndpoint, projectPage, listAllProjects, listProjectsLegacy } from '@/api'
 import { toLogin, errorText } from '@/api/http'
 import { useTokenRefresh } from '@/composables/useTokenRefresh'
-import { toProject } from '@/geo/model'
+import { toProject, mergeDeveloperAliases } from '@/geo/model'
 import { mergeProjects } from '@/api/merge'
 import { loadShared, postShared } from '@/geo/shared'
 import { hasAmapKey, loadAmap } from '@/geo/amap'
@@ -340,7 +340,9 @@ const cityLabels = computed(() =>
   cityOptions.value.map((c) => ({ key: c.code, name: c.name, info: regionInfo(c.code) })).filter((c) => c.info).map((c) => ({ key: c.key, name: c.name, lnglat: [c.info.lng, c.info.lat] }))
 )
 
-const cityProjects = computed(() => (regionFilter.value ? allProjects.value.filter((p) => p.city === cityCode.value) : allProjects.value))
+// 开发商前缀别名并到同区的短名小区（「路劲蠡湖院子」→「蠡湖院子」）：按全部项目算，筛选不影响分组 key
+const namedProjects = computed(() => mergeDeveloperAliases(allProjects.value))
+const cityProjects = computed(() => (regionFilter.value ? namedProjects.value.filter((p) => p.city === cityCode.value) : namedProjects.value))
 
 const distributorOptions = computed(() => {
   const m = new Map()
@@ -368,6 +370,14 @@ const groups = computed(() => {
     if (!g) {
       g = { key, community: p.community, vague: p.vague, queries: p.queries, keywords: p.keywords, geoCity: p.geoCity, city: p.city, cityName: p.cityName, district: p.geoDistrict, areaDistrict: p.district, districtName: p.districtName, count: 0, area: 0, types: new Set(), latest: '', projects: [] }
       m.set(key, g)
+    }
+    // 别名并入的项目：把它的原名查询串补进组里（与 keywords 一一对应），已有的缓存 / 种子仍能命中
+    if (p.aliasOf) {
+      for (const [i, q] of p.queries.entries()) {
+        if (g.queries.includes(q)) continue
+        g.queries = [...g.queries, q]
+        g.keywords = [...g.keywords, p.keywords[i]]
+      }
     }
     g.count++
     g.projects.push(p)
@@ -903,7 +913,8 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  background: linear-gradient(180deg, rgba(4, 11, 24, 0.92) 0, rgba(4, 11, 24, 0.8) 64px, rgba(4, 11, 24, 0) 96px);
+  /* 0–72 px 近乎实底（标记不再从时钟 / 分段按钮后面半透出来），72–96 px 才渐隐 */
+  background: linear-gradient(180deg, rgba(4, 11, 24, 0.97) 0, rgba(4, 11, 24, 0.94) 72px, rgba(4, 11, 24, 0) 96px);
   pointer-events: none;
   z-index: 10;
   > * {
@@ -1040,7 +1051,7 @@ onBeforeUnmount(() => {
   align-items: center;
   gap: 6px;
   position: relative;
-  height: 36px;
+  height: max(40px, calc(40px / var(--ui-scale, 1))); /* 缩放后屏幕上仍 ≥ 40 px */
   padding: 0 12px 0 10px;
   font: inherit;
   font-size: 13px;
@@ -1135,6 +1146,8 @@ onBeforeUnmount(() => {
   font-size: 13px;
   color: var(--dm-text-2);
   z-index: 10;
+  background: rgba(4, 11, 24, 0.9); /* 标记从图例后面经过时不透出来 */
+  backdrop-filter: blur(8px);
   span {
     display: flex;
     align-items: center;
@@ -1205,9 +1218,9 @@ onBeforeUnmount(() => {
   padding: 3px 10px;
   font-size: 12px;
   color: #7f9cc0;
-  background: rgba(4, 11, 24, 0.72);
+  background: rgba(4, 11, 24, 0.9);
   border-radius: 6px;
-  backdrop-filter: blur(6px);
+  backdrop-filter: blur(8px);
   font-variant-numeric: tabular-nums;
   .ring {
     width: 12px;
@@ -1370,6 +1383,8 @@ onBeforeUnmount(() => {
     flex-direction: column;
     justify-content: center;
     gap: 4px;
+    user-select: none; /* 整行是点按目标：抖动点按 / 长按不选中文字 */
+    -webkit-user-select: none;
     height: 56px;
     padding: 0 26px 0 12px;
     border-bottom: 1px solid rgba(120, 170, 255, 0.1);
