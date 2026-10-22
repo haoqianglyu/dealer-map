@@ -94,6 +94,9 @@ body,
   ::-webkit-scrollbar-thumb {
     background: rgba(16, 33, 58, 0.5);
   }
+  ::-webkit-scrollbar-thumb:hover {
+    background: rgba(16, 33, 58, 0.7);
+  }
   :focus-visible {
     outline-color: #0e7490;
   }

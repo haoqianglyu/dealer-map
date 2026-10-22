@@ -1590,4 +1590,165 @@ onBeforeUnmount(() => {
 .dm-pop__all:hover {
   background: rgba(53, 212, 255, 0.12);
 }
+/* ---------- 亮色主题（docs/fable-light-theme.md §2.3 / §3）：只加覆盖，深色规则一条不动 ---------- */
+:root[data-theme='light'] .amap,
+:root[data-theme='light'] .amap .amap-container,
+:root[data-theme='light'] .amap .amap-maps {
+  background: #eef2f6 !important;
+}
+:root[data-theme='light'] .amap .amap-scale-text {
+  color: #3b4f6b !important;
+  text-shadow: 0 0 3px #fff;
+}
+:root[data-theme='light'] .amap .amap-scale-line,
+:root[data-theme='light'] .amap .amap-scale-edgeleft,
+:root[data-theme='light'] .amap .amap-scale-edgeright,
+:root[data-theme='light'] .amap .amap-scale-middle {
+  border-color: rgba(16, 33, 58, 0.6) !important;
+  background: rgba(16, 33, 58, 0.6) !important;
+}
+/* 标记：环 + 近白填充 + 深墨数字；外投影把环从底图上托起来 */
+:root[data-theme='light'] .dm-mk {
+  background: color-mix(in srgb, var(--c) 10%, rgba(255, 255, 255, 0.94));
+  box-shadow: inset 0 0 calc(14px * var(--k, 1)) color-mix(in srgb, var(--c) 16%, transparent), 0 1px 4px rgba(16, 33, 58, 0.18);
+}
+:root[data-theme='light'] .dm-mk__n {
+  color: var(--dm-text);
+}
+:root[data-theme='light'] .dm-hit:hover .dm-mk__label {
+  color: #10213a;
+}
+:root[data-theme='light'] .dm-mk--cluster::before {
+  border-color: color-mix(in srgb, var(--c) 80%, transparent);
+}
+:root[data-theme='light'] .dm-mk__badge {
+  background: var(--dm-alarm);
+  box-shadow: 0 1px 3px rgba(16, 33, 58, 0.25), 0 0 0 1.5px #fff;
+}
+:root[data-theme='light'] .dm-mk__label {
+  color: #10213a;
+  -webkit-text-stroke-color: rgba(255, 255, 255, 0.92);
+}
+:root[data-theme='light'] .dm-mk:not(.dm-mk--district) .dm-mk__label {
+  color: #3b4f6b;
+}
+:root[data-theme='light'] .dm-mk .dm-mk__label--side,
+:root[data-theme='light'] .dm-mk:not(.dm-mk--district) .dm-mk__label--side,
+:root[data-theme='light'] .dm-mk--named .dm-mk__label,
+:root[data-theme='light'] .dm-mk:not(.dm-mk--district).dm-mk--named .dm-mk__label {
+  color: #10213a;
+}
+:root[data-theme='light'] .dm-mk .dm-mk__label--side small,
+:root[data-theme='light'] .dm-mk .dm-mk__label--sub,
+:root[data-theme='light'] .dm-mk:not(.dm-mk--district) .dm-mk__label--sub,
+:root[data-theme='light'] .dm-mk--named .dm-mk__label small {
+  color: #5b6b80;
+}
+/* 离线：环 100%（70% 在亮底上只有 2.6:1）、填 8%、数字降一档、不用 opacity */
+:root[data-theme='light'] .dm-mk--offline {
+  border-color: var(--dm-offline);
+  background: color-mix(in srgb, var(--dm-offline) var(--dm-offline-fill, 8%), rgba(255, 255, 255, 0.94));
+  box-shadow: 0 1px 4px rgba(16, 33, 58, 0.18);
+}
+:root[data-theme='light'] .dm-hit .dm-mk--offline .dm-mk__n {
+  color: #3b4f6b;
+}
+:root[data-theme='light'] .dm-hit .dm-mk.dm-mk--offline .dm-mk__label,
+:root[data-theme='light'] .dm-hit .dm-mk.dm-mk--offline.dm-mk--named .dm-mk__label,
+:root[data-theme='light'] .dm-hit .dm-mk.dm-mk--offline .dm-mk__label--side {
+  color: var(--dm-offline-name, #5b6b80);
+}
+:root[data-theme='light'] .dm-mk--dot {
+  border-color: rgba(255, 255, 255, 0.95);
+  background: var(--c);
+  box-shadow: 0 1px 3px rgba(16, 33, 58, 0.25);
+}
+:root[data-theme='light'] .dm-mk--pulse::after {
+  animation-name: dm-pulse-light;
+}
+@keyframes dm-pulse-light {
+  from {
+    transform: scale(1);
+    opacity: 0.7;
+  }
+  to {
+    transform: scale(2.2);
+    opacity: 0;
+  }
+}
+:root[data-theme='light'] .dm-city {
+  color: #3b4f6b;
+  -webkit-text-stroke-color: rgba(255, 255, 255, 0.9);
+}
+:root[data-theme='light'] .dm-city--ctx {
+  color: #6b7a90;
+}
+:root[data-theme='light'] .dm-hlabel {
+  color: #7a480a;
+  -webkit-text-stroke-color: rgba(255, 255, 255, 0.9);
+}
+/* 弹窗 */
+:root[data-theme='light'] .dm-pop {
+  color: #10213a;
+  background: rgba(255, 255, 255, 0.98);
+  border-color: rgba(16, 33, 58, 0.12);
+  box-shadow: 0 calc(12px * var(--k, 1)) calc(32px * var(--k, 1)) rgba(16, 33, 58, 0.18);
+}
+:root[data-theme='light'] .dm-pop__arrow {
+  background: rgba(255, 255, 255, 0.98);
+  border-color: rgba(16, 33, 58, 0.12);
+}
+:root[data-theme='light'] .dm-pop__h {
+  border-bottom-color: rgba(16, 33, 58, 0.08);
+}
+:root[data-theme='light'] .dm-pop__h b {
+  color: #10213a;
+}
+:root[data-theme='light'] .dm-pop__h span,
+:root[data-theme='light'] .dm-pop__x,
+:root[data-theme='light'] .dm-pop li .a,
+:root[data-theme='light'] .dm-pop li.al,
+:root[data-theme='light'] .dm-pop li.al .t,
+:root[data-theme='light'] .dm-pop li.al--note,
+:root[data-theme='light'] .dm-pop li.grp {
+  color: #5b6b80;
+}
+:root[data-theme='light'] .dm-pop__h em,
+:root[data-theme='light'] .dm-pop li.grp em,
+:root[data-theme='light'] .dm-pop li.al.on {
+  color: #b42318;
+}
+:root[data-theme='light'] .dm-pop__x:hover {
+  color: #10213a;
+  background: rgba(16, 33, 58, 0.06);
+}
+:root[data-theme='light'] .dm-pop li.pj.off .n {
+  color: #5b6b80;
+}
+:root[data-theme='light'] .dm-pop .go,
+:root[data-theme='light'] .dm-pop li.al--more {
+  color: #0e7490;
+}
+:root[data-theme='light'] .dm-pop .go:focus-visible,
+:root[data-theme='light'] .dm-pop li.al--sum:focus-visible,
+:root[data-theme='light'] .dm-pop li.al--more:focus-visible {
+  outline-color: var(--dm-focus);
+}
+:root[data-theme='light'] .dm-pop li.al--sum:hover {
+  background: rgba(14, 116, 144, 0.06);
+}
+:root[data-theme='light'] .dm-pop li.grp {
+  background: #f3f4f5;
+}
+:root[data-theme='light'] .dm-pop li.grp .n {
+  color: #3b4f6b;
+}
+:root[data-theme='light'] .dm-pop__all {
+  color: #0e7490;
+  background: rgba(14, 116, 144, 0.06);
+  border-color: rgba(14, 116, 144, 0.3);
+}
+:root[data-theme='light'] .dm-pop__all:hover {
+  background: rgba(14, 116, 144, 0.12);
+}
 </style>
