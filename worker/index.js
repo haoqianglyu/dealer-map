@@ -146,6 +146,11 @@ export default {
       }
       return withHeaders(res, { 'Cache-Control': 'public, max-age=31536000, immutable' }) // 文件名带内容哈希
     }
+    // 带扩展名的静态文件（favicon.ico、*.png 等）缺失时同样 404，不回 index.html
+    if (/\.[a-z0-9]+$/i.test(url.pathname) && !/\.html?$/i.test(url.pathname) && (res.headers.get('content-type') || '').includes('text/html')) {
+      return withHeaders(new Response('Not Found', { status: 404 }), { 'Cache-Control': 'no-store' })
+    }
+    if (/^\/(favicon[^/]*|apple-touch-icon\.png)$/.test(url.pathname)) return withHeaders(res, { 'Cache-Control': 'public, max-age=86400' })
     // HTML 入口每次都向服务器确认，部署后立即拿到新版本
     if ((res.headers.get('content-type') || '').includes('text/html')) return withHeaders(res, { 'Cache-Control': 'no-cache' })
     return withHeaders(res)

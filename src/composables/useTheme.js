@@ -27,8 +27,8 @@ function apply(t) {
   if (t === 'light') html.dataset.theme = 'light'
   else delete html.dataset.theme
   html.style.colorScheme = t === 'light' ? 'light' : '' // 深色保持未设置（原生控件与改前一致）
-  const meta = document.querySelector('meta[name=theme-color]')
-  if (meta) meta.content = t === 'light' ? '#eef2f6' : '#040b18'
+  // index.html 按系统配色给了两条 theme-color（JS 前的首屏）；应用主题是用户选的，挂载后两条都改成当前主题色
+  for (const meta of document.querySelectorAll('meta[name=theme-color]')) meta.content = t === 'light' ? '#eef2f6' : '#040b18'
 }
 watch(theme, apply, { immediate: true })
 
