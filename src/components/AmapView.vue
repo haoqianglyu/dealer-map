@@ -629,7 +629,7 @@ function refreshGroupPopover() {
   if (!pop?.c?.groups || level !== 'terminal') return // 只在终态级（缩小后的簇不是同一个分组）
   const t = pickRefreshTarget(indexes, lastItems, pop.c.memberKeys.split('\n'), pop.c.focusKey)
   if (!t) return
-  if (t.item.clusterId == null) return openPopover(t.members[0]) // 聚焦的小区被拆出来成了单小区：改出它自己的弹窗
+  // 聚焦的小区被拆出来成了单小区时也用（一组的）分组弹窗：保留 groups / focusKey，之后再重建还能跟着它并进新簇
   const c = groupContent(t.item, pop.c.focusKey)
   if (c.memberKeys === pop.c.memberKeys) return
   pop.c = c

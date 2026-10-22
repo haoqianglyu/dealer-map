@@ -214,3 +214,21 @@ test('pickRefreshTarget：没有 focusKey 时取含旧成员最多的项', async
   }
   assert.equal(pickRefreshTarget(idx, items, ['Z'], null), null)
 })
+
+test('pickRefreshTarget：B 拆成单小区后再并进 [B,D]，仍跟着 B', async () => {
+  const { pickRefreshTarget } = await import('../src/geo/cluster.js')
+  const lat = 31.53
+  const A = C('A', [120.27, lat], [P(1)])
+  const B = C('B', [120.2709, lat], [P(2)])
+  const Cn = C('C', [120.2691, lat], [P(3)])
+  const D = C('D', [120.271, lat], [P(4)])
+  let idx = buildIndexes([Cn, A, B])
+  let t = pickRefreshTarget(idx, query(idx, 'terminal', WORLD, 16), ['A', 'B'], 'B')
+  const keys1 = t.members.map((m) => m.key)
+  assert.deepEqual(keys1, ['B'])
+  idx = buildIndexes([Cn, A, B, D])
+  const items = query(idx, 'terminal', WORLD, 16)
+  assert.deepEqual(items.map((i) => membersOf(idx, i).map((m) => m.key).sort().join(',')).sort(), ['A,C', 'B,D'])
+  t = pickRefreshTarget(idx, items, keys1, 'B')
+  assert.deepEqual(t.members.map((m) => m.key).sort(), ['B', 'D'])
+})
