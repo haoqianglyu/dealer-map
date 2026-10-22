@@ -708,7 +708,7 @@ function renderMarkers(animate = true) {
   lastItems = items
   lastView = { level, zq, items }
   syncMarkers(
-    items.map((it) => ({
+    items.filter((it) => !lay.get(it.id).hidden).map((it) => ({
       id: it.id,
       it,
       lnglat: it.lnglat,

@@ -181,6 +181,11 @@ export function layoutLabels(items, level, k = 1) {
     if (demoted.has(it.id) || !freeOfPlaced([grow(C, -pad)])) {
       // 被更高优先级的胶囊 / 圈压住：只留一个小点（点击仍按自己的簇处理）
       demoted.add(it.id)
+      // 圆心落在已放的胶囊 / 名字里：连小点也不画（半透明胶囊里透出一个点只是噪声；放大后自然拆出来）
+      if (placed.some((p) => it.x > p.l && it.x < p.r && it.y > p.t && it.y < p.b)) {
+        out.set(it.id, { named: false, label: '', dot: true, hidden: true })
+        continue
+      }
       const h = (DOT_SIZE * k) / 2
       placed.push({ l: it.x - h, r: it.x + h, t: it.y - h, b: it.y + h })
       out.set(it.id, { named: false, label: '', dot: true })
