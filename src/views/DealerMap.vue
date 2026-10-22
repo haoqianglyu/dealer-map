@@ -2266,7 +2266,7 @@ onBeforeUnmount(() => {
   transition: opacity 0.2s ease;
 }
 .chip-leave-active {
-  transition: opacity 0.1s ease; /* 退出 ≤ 100 ms */
+  transition: opacity 0.06s ease; /* 退出：事件 → 胶囊消失 ≤ 100 ms（含一帧渲染） */
 }
 .chip-enter-from,
 .chip-leave-to {
