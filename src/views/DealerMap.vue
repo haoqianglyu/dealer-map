@@ -85,19 +85,26 @@
             <button :class="{ on: heatMetric === 'alarms' }" :tabindex="mode === 'heat' ? 0 : -1" @click="heatMetric = 'alarms'">告警</button>
           </div>
           <!-- 展厅巡览：点按 = 立即开始；没有「停止」—— 任何触摸就是停止。1350（compact）下等顶栏减负（第 8 条）后再显示 -->
-          <button v-if="tourCfg.enabled && AMapRef && !compact" class="tour-btn" title="开始自动巡览" aria-label="开始自动巡览" @click="tour.start()">
+          <button v-if="tourCfg.enabled && AMapRef && !compact" class="icon-btn tour-btn" title="开始自动巡览" aria-label="开始自动巡览" @click="tour.start()">
             <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M8 5.5v13l10.5-6.5L8 5.5z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" /></svg>
           </button>
           <div class="clock">
             <b>{{ clock.time }}</b><small>{{ clock.date }}</small>
           </div>
-          <div class="user" :title="`${userName}（${scopeHint}）`">
+          <!-- 公司全称与 logo 重复：矮 / 窄屏（compact）不显示，给巡航开关让位（第五轮 #8） -->
+          <div v-if="!compact" class="user" :title="`${userName}（${scopeHint}）`">
             <span class="user__name">{{ userName || '…' }}</span>
           </div>
-          <div class="seg seg--theme" role="group" aria-label="主题">
-            <button :class="{ on: theme === 'dark' }" :aria-pressed="theme === 'dark'" @click="switchTheme('dark', $event.currentTarget)">深色</button>
-            <button :class="{ on: theme === 'light' }" :aria-pressed="theme === 'light'" @click="switchTheme('light', $event.currentTarget)">亮色</button>
-          </div>
+          <!-- 主题：一个 40×40 图标按钮（显示要切到的那一套：深色下 ☀、亮色下 ☾），圆形揭开的圆心仍取按钮中心 -->
+          <button
+            class="icon-btn theme-btn"
+            :title="theme === 'dark' ? '切换到亮色' : '切换到深色'"
+            :aria-label="theme === 'dark' ? '切换到亮色' : '切换到深色'"
+            @click="switchTheme(theme === 'dark' ? 'light' : 'dark', $event.currentTarget)"
+          >
+            <svg v-if="theme === 'dark'" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="12" cy="12" r="4" /><path d="M12 2.5v2.2M12 19.3v2.2M2.5 12h2.2M19.3 12h2.2M5.3 5.3l1.6 1.6M17.1 17.1l1.6 1.6M5.3 18.7l1.6-1.6M17.1 6.9l1.6-1.6" /></g></svg>
+            <svg v-else viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M20 14.5A8 8 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" /></svg>
+          </button>
           <button class="logout" title="退出登录" aria-label="退出登录" @click="logout">
             <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M10 4H5a1 1 0 0 0-1 1v14a1 1 0 0 0 1 1h5M15 8l4 4-4 4M19 12H9" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" /></svg>
             <span>退出</span>
@@ -1315,7 +1322,7 @@ onBeforeUnmount(() => {
       color: var(--dm-alarm-text);
     }
   }
-  .tour-btn {
+  .icon-btn {
     color: var(--dm-text);
     background: rgba(16, 33, 58, 0.04);
     border-color: rgba(16, 33, 58, 0.14);
@@ -2182,7 +2189,8 @@ onBeforeUnmount(() => {
   opacity: 0.35;
   transition: opacity 0.15s;
 }
-.tour-btn {
+/* 顶栏图标按钮（主题等）：常显边框同「退出」，40×40（缩放后屏幕上仍 ≥ 40 px） */
+.icon-btn {
   position: relative;
   display: flex;
   align-items: center;
