@@ -6,15 +6,27 @@ ab() { agent-browser "$@"; }
 # 从干净的地图页开始（整页刷新，回到默认缩放）
 ab eval 'location.hash="#/dealer-map"; location.reload(); 1' >/dev/null; sleep 4
 for i in $(seq 1 30); do [ "$(ab eval 'document.querySelectorAll(".dm-mk").length > 0 ? 1 : 0' | tr -d '"')" = "1" ] && break; sleep 2; done; sleep 3
-hit=$(ab eval 'JSON.stringify((()=>{const m=document.querySelector(".dm-mk--district")||document.querySelector(".dm-mk");if(!m)return "none";const r=m.getBoundingClientRect();const el=document.elementFromPoint(r.x+r.width/2,r.y+r.height/2);return m.contains(el)?"ok":"blocked by "+el.tagName})())')
-echo "district hit-test: $hit"
-case "$hit" in *ok*) ;; *) exit 1;; esac
-ab click '.dm-mk--district' >/dev/null 2>&1; sleep 2
-# 放大后应出现小区级标记
-n=$(ab eval 'document.querySelectorAll(".dm-mk:not(.dm-mk--district)").length')
-echo "community markers after zoom: $n"
-[ "${n//\"/}" -gt 0 ] || exit 1
-ab click '.dm-mk:not(.dm-mk--district)' >/dev/null 2>&1; sleep 1
+# 真人点击：按下 → 抖动几像素 → 抬起（鼠标 / 触控板 / 手指 / 遥控都会抖）。高德 Marker 'click' 在移动 ≥ ~3px 时会被吞掉，
+# 合成的「原地按下抬起」测不出来——这里故意抖 ~4px（+3,+2）。
+tap() { local x=${1%,*} y=${1#*,}; ab mouse move "$x" "$y" >/dev/null; ab mouse down >/dev/null; ab mouse move $((x+3)) $((y+2)) >/dev/null; ab mouse up >/dev/null; }
+# 可见且未被遮挡的标记中心（优先指定名字）
+mkxy() { ab eval "JSON.stringify((()=>{const ms=[...document.querySelectorAll('$1')].sort((a,b)=>(b.innerText.includes('$2'))-(a.innerText.includes('$2')));for(const m of ms){const r=m.getBoundingClientRect();const x=Math.round(r.x+r.width/2),y=Math.round(r.y+r.height/2);if(m.contains(document.elementFromPoint(x,y)))return [x,y]}return null})())" | tr -d '"\\[]'; }
+scale() { ab eval 'document.querySelector(".amap-scale-text")?.innerText' | tr -d '"'; }
+d=$(mkxy '.dm-mk--district' 滨湖区)
+echo "district bubble at: $d"
+[ -n "$d" ] && [ "$d" != "null" ] || exit 1
+s0=$(scale)
+tap "$d"; sleep 2
+# 放大到该区的小区级：区县气泡消失、出现小区标记、比例尺变小
+n=$(ab eval 'document.querySelectorAll(".dm-mk:not(.dm-mk--district)").length' | tr -d '"')
+nd=$(ab eval 'document.querySelectorAll(".dm-mk--district").length' | tr -d '"')
+s1=$(scale)
+echo "after district tap: scale $s0 → $s1, district bubbles $nd, community markers $n"
+[ "$n" -gt 0 ] && [ "$nd" = "0" ] && [ "$s1" != "$s0" ] || exit 1
+c=$(mkxy '.dm-mk:not(.dm-mk--district)' '')
+echo "community marker at: $c"
+[ -n "$c" ] && [ "$c" != "null" ] || exit 1
+tap "$c"; sleep 1
 pop=$(ab eval '[...document.querySelectorAll(".dm-pop")].some(p=>p.offsetParent) ? 1 : 0')
 echo "popover open: $pop"
 [ "${pop//\"/}" = "1" ] || exit 1
@@ -31,7 +43,7 @@ echo "popover closed: $closed"
 red=$(ab eval 'JSON.stringify((()=>{for(const m of document.querySelectorAll(".dm-mk--alarm:not(.dm-mk--district)")){const r=m.getBoundingClientRect();const x=r.x+r.width/2,y=r.y+r.height/2;if(m.contains(document.elementFromPoint(x,y)))return [Math.round(x),Math.round(y)]}return null})())' | tr -d '"\\[]')
 echo "red marker at: $red"
 [ -n "$red" ] && [ "$red" != "null" ] || exit 1
-ab mouse move ${red%,*} ${red#*,} >/dev/null; ab mouse down >/dev/null; ab mouse up >/dev/null; sleep 1
+tap "$red"; sleep 1
 rows=$(ab eval 'JSON.stringify([...document.querySelectorAll(".dm-pop li.al")].filter(l=>l.offsetParent).slice(0,3).map(l=>l.innerText.replace(/\s+/g," ")))')
 echo "alarm rows: $rows"
 case "$rows" in *级*) echo PASS-ALARM ;; *) exit 1;; esac
@@ -46,7 +58,7 @@ gone=$(ab eval '[...document.querySelectorAll(".dm-pop")].some(p=>p.offsetParent
 echo "closed by x: $gone"; [ "$gone" = "1" ] || exit 1
 # 弹窗打开时可能平移过地图（避让界面）：重新取红色标记位置
 red=$(ab eval 'JSON.stringify((()=>{for(const m of document.querySelectorAll(".dm-mk--alarm:not(.dm-mk--district)")){const r=m.getBoundingClientRect();const x=r.x+r.width/2,y=r.y+r.height/2;if(m.contains(document.elementFromPoint(x,y)))return [Math.round(x),Math.round(y)]}return null})())' | tr -d '"\\[]')
-real "$red"; sleep 1
+tap "$red"; sleep 1
 echo PASS-CLOSE
 
 # 4) 弹窗「详情 ›」→ 项目二级界面；返回地图后标记仍在（keep-alive 保留视图）

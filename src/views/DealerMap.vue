@@ -290,7 +290,17 @@ const queuedKeys = new Set()
 const retryKeys = new Set()
 
 // ---------- 范围 ----------
-const regionFilter = computed(() => (typeof route.query.region === 'string' ? route.query.region : ''))
+// 只跟随地图页自己的路由：keep-alive 缓存时 useRoute() 指向当前页面（项目详情），没有 region，
+// 若直接用会被当成「全部城市」——在后台重算全部城市的区县并重新适配视野，返回地图时视图被重置（标记 188 → 7）
+const MAP_PATH = '/dealer-map'
+const readRegion = () => (typeof route.query.region === 'string' ? route.query.region : '')
+const regionFilter = ref(readRegion())
+watch(
+  () => [route.path, route.query.region],
+  () => {
+    if (route.path === MAP_PATH && regionFilter.value !== readRegion()) regionFilter.value = readRegion()
+  }
+)
 // 默认城市 = 无锡市：每次登录 / 打开大屏都从无锡开始（「全部城市」可手动切换，本次会话内保持）；账号下没有无锡项目时退回全部城市
 const DEFAULT_REGION = '320000/320200'
 if (typeof route.query.region !== 'string') router.replace({ query: { ...route.query, region: DEFAULT_REGION } })
