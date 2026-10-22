@@ -4,7 +4,7 @@
 set -u
 ab() { agent-browser "$@"; }
 # 从干净的地图页开始（整页刷新，回到默认缩放）
-ab eval 'location.hash="#/dealer-map"; location.reload(); 1' >/dev/null; sleep 4
+ab eval 'location.hash="#/dealer-map?tour=off"; location.reload(); 1' >/dev/null; sleep 4
 for i in $(seq 1 30); do [ "$(ab eval 'document.querySelectorAll(".dm-mk").length > 0 ? 1 : 0' | tr -d '"')" = "1" ] && break; sleep 2; done; sleep 3
 # 真人点击：按下 → 抖动几像素 → 抬起（鼠标 / 触控板 / 手指 / 遥控都会抖）。高德 Marker 'click' 在移动 ≥ ~3px 时会被吞掉，
 # 合成的「原地按下抬起」测不出来——这里故意抖 ~4px（+3,+2）。
