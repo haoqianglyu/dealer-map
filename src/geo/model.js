@@ -55,7 +55,7 @@ export function toProject(raw) {
     province,
     city: cityCode,
     cityName: city?.name || '',
-    district: districtCode, // 展示 / 统计用区县
+    district: district ? districtCode : '', // 展示 / 统计用区县（表里没有的代码按「区县未填」处理：不在地图上画一个叫「区县未填」的圈）
     districtName: district?.name || '区县未填',
     geoDistrict, // 地理编码范围（区县 adcode；'' = 全市范围）
     type: appTypeName(raw.app_name),
