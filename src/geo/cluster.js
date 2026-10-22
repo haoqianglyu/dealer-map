@@ -159,7 +159,7 @@ export function layoutLabels(items, level, k = 1) {
     const name = it.top || '未识别小区'
     const text = it.k > 1 ? `${name} 等 ${it.k} 小区` : name
     const numW = Math.max(S - 12 * k, textWidth(String(it.n), 13) * k)
-    const w = 4 * k + numW + 6 * k + textWidth(name, 13) * k + (it.k > 1 ? (textWidth(` 等 ${it.k} 小区`, 11) + 4) * k : 0) + 10 * k
+    const w = 4 * k + numW + 6 * k + textWidth(name, 13) * k + (it.k > 1 ? (textWidth(` 等 ${it.k} 小区`, 11) + 4) * k : 0) + 10 * k + 8 * k // 右内边距 + 边框 4 + 字形余量 4
     const rect = { l: it.x - w / 2, r: it.x + w / 2, t: it.y - S / 2, b: it.y + S / 2 }
     if (!seen.has(text) && clear(rect, it.id)) {
       placed.push(rect)
