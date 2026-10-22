@@ -20,7 +20,7 @@ export function toProject(raw) {
   const fromAddr = communityParts(raw.customer_address, ctx)
   // 名称开头的市 / 区县前缀是更可靠的位置提示（「太仓市天悦湾」填在吴中区）：
   // 区县级 → 项目改归该区县；市级 → 在该市范围内查（同市时展示仍用所填区县）
-  const hint = fromName.hint || (!fromName.name && fromAddr.hint) || ''
+  const hint = fromName.hint || fromAddr.hint || ''
   let { province, city: cityCode, district: districtCode } = region
   let geoDistrict = districtCode
   if (hint && !/00$/.test(hint)) {

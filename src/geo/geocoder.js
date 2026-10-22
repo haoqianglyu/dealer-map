@@ -56,7 +56,8 @@ function inDistrict(adcode, group) {
   const want = String(group.district || group.city || '')
   const got = String(adcode || '')
   if (!want || !got) return false
-  return /00$/.test(want) && !group.district ? got.slice(0, 4) === want.slice(0, 4) : got === want
+  if (/00$/.test(want) && !group.district) return /^(11|12|31|50)/.test(want) ? got.slice(0, 2) === want.slice(0, 2) : got.slice(0, 4) === want.slice(0, 4) // 直辖市全市范围含 xx02 县
+  return got === want
 }
 // 小区名开头带的市/区名（如「安州区典汇国际」「龙岩紫金山…」）不参与名称比对
 export function stripPlace(name, g) {

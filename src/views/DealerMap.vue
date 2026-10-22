@@ -733,9 +733,11 @@ watch(regionFilter, async () => {
   await loadProjects()
 })
 watch(cityCode, (c) => loadGeojson(c))
-watch(loading, (l) => {
-  if (l || defaultChecked || !allProjects.value.length) return
+// 全部加载完（不是第一页）再判断；按城市请求的旧接口返回 0 条时也退回全部城市
+watch([loading, () => allProjects.value.length, totalVisible], ([l, n, total]) => {
+  if (l || defaultChecked || (FETCH_ALL && endpoint && n < total)) return
   defaultChecked = true
+  if (regionFilter.value === DEFAULT_REGION && !n) return changeRegion('')
   if (regionFilter.value === DEFAULT_REGION && !allProjects.value.some((p) => p.city === DEFAULT_REGION.split('/')[1])) changeRegion('')
 })
 watch(groups, geocodeGroups)
@@ -1443,6 +1445,53 @@ onBeforeUnmount(() => {
     font-size: 16px;
     font-style: normal;
     color: var(--dm-text-3);
+  }
+}
+.rows {
+  padding: 4px 16px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  .row {
+    display: grid;
+    grid-template-columns: 64px 1fr auto;
+    align-items: center;
+    gap: 10px;
+    font-size: 13px;
+  }
+  .name {
+    color: var(--dm-text-2);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .track {
+    height: 8px;
+    background: rgba(120, 170, 255, 0.08);
+    border-radius: 4px;
+    i {
+      display: block;
+      height: 100%;
+      min-width: 4px;
+      border-radius: 4px;
+      background: rgba(53, 212, 255, 0.55);
+      transition: width 0.4s ease;
+    }
+  }
+  .row:first-child .track i {
+    background: var(--dm-accent);
+  }
+  .val {
+    text-align: right;
+    font: 600 14px/1 var(--dm-num);
+    color: var(--dm-text);
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+    small {
+      margin-left: 6px;
+      font: 400 12px/1 var(--dm-font);
+      color: var(--dm-text-3);
+    }
   }
 }
 .chart-box {

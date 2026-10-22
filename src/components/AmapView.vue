@@ -140,7 +140,7 @@ function openPopover(c, keep = false) {
   info.open(map, c.lnglat)
   nextTick(() =>
     requestAnimationFrame(() => {
-      if (!keep) avoidUi()
+      avoidUi() // 展开告警 / 更多后弹窗变高，再检查一次是否被界面挡住
       el.value?.querySelectorAll('.dm-pop .mqx').forEach((n) => popMq.push(mountMarquee(n)))
     })
   )
@@ -391,6 +391,7 @@ onMounted(() => {
     center: props.center || undefined,
     mapStyle: MAP_STYLE,
   })
+  if (import.meta.env.DEV) window.__dmMap = map // 开发环境：验证脚本读取缩放级别
   el.value.addEventListener('click', onPopClick)
   el.value.addEventListener('pointerdown', onPopDown, true)
   el.value.addEventListener('wheel', onPopWheel, { capture: true, passive: false })
