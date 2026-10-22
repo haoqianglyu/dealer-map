@@ -197,9 +197,15 @@ export function layoutLabels(items, level, k = 1) {
     const nameW = textWidth(name, 13) * k + (sub ? (textWidth(` ${sub}`, 11) + 4) * k : 0)
     const numW = Math.max(S - 12 * k, textWidth(String(it.n), 13) * k)
     const w = 4 * k + numW + 6 * k + nameW + 10 * k + 8 * k // 右内边距 + 边框 4 + 字形余量 4
+    // 「n 告警」角标（右上，-8 px，高 18）：也算进占用区域，相邻两项不会隔着角标互压
+    const badge = (right, top) => {
+      if (!it.alarms) return []
+      const bw = (textWidth(`${it.alarms} 告警`, 11) + 12) * k
+      return [{ l: right - 12 * k, r: right - 12 * k + bw, t: top - 8 * k, b: top + 10 * k }]
+    }
     const cands = []
     if (!seen.has(text)) {
-      cands.push({ kind: 'capsule', rects: [{ l: it.x - w / 2, r: it.x + w / 2, t: it.y - S / 2, b: it.y + S / 2 }] })
+      cands.push({ kind: 'capsule', rects: [{ l: it.x - w / 2, r: it.x + w / 2, t: it.y - S / 2, b: it.y + S / 2 }, ...badge(it.x + w / 2, it.y - S / 2)] })
       const lw = nameW + 6 * k
       const lh = 16 * k
       const gap = 5 * k
@@ -209,7 +215,7 @@ export function layoutLabels(items, level, k = 1) {
         if (s === 'below') return { l: it.x - lw / 2, r: it.x + lw / 2, t: C.b + gap, b: C.b + gap + lh }
         return { l: it.x - lw / 2, r: it.x + lw / 2, t: C.t - gap - lh, b: C.t - gap }
       }
-      for (const s of terminal ? ['right', 'left', 'below', 'above'] : ['right', 'left']) cands.push({ kind: 'side', side: s, rects: [C, side(s)] })
+      for (const s of terminal ? ['right', 'left', 'below', 'above'] : ['right', 'left']) cands.push({ kind: 'side', side: s, rects: [C, side(s), ...badge(C.r, C.t)] })
     }
     // 先找不压任何圈的位置；没有的话，胶囊 / 外挂名字可以压更低优先级的圈（把它们降级为小点）
     const ok = cands.filter((c) => freeOfPlaced(c.rects))
@@ -222,7 +228,7 @@ export function layoutLabels(items, level, k = 1) {
       continue
     }
     for (const id of lowerHits([C], it.id)) demoted.add(id)
-    placed.push(C)
+    placed.push(C, ...badge(C.r, C.t))
     out.set(it.id, { named: false, label: '' })
   }
   return out

@@ -181,8 +181,10 @@ export function mergeAliases(projects, districtName = () => '') {
   const out = projects.map((p) => {
     if (!p.community) return p
     let q = p
-    if (!p.geoDistrict && p.district && p.district.startsWith(p.city.slice(0, 4)) && names.has(`${p.district}|${p.community}`)) {
-      q = { ...q, geoDistrict: p.district, geoCity: p.district, aliasOf: p.community }
+    // 「无锡市万科翡翠东方」（全市范围）→ 所填区县里的「万科翡翠东方」或「翡翠东方」都算
+    if (!p.geoDistrict && p.district && p.district.startsWith(p.city.slice(0, 4))) {
+      const dn = [p.community, stripDeveloper(p.community)].find((n) => n && names.has(`${p.district}|${n}`))
+      if (dn) q = { ...q, community: dn, geoDistrict: p.district, geoCity: p.district, aliasOf: p.community }
     }
     const base = stripDeveloper(q.community)
     if (base && names.has(`${scope(q)}|${base}`)) q = { ...q, community: base, aliasOf: q.community }

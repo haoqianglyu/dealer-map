@@ -263,6 +263,8 @@ test('P1-2 mergeAliases：湖玺庄园 / 蠡湖院子 / 翡翠东方 各成一�
   assert.equal(byId[7].community, '绿地香颂')
   assert.equal(byId[8].community, '绿地香颂公馆')
   assert.equal(byId[1], ps[0], '未变化的项目原样返回')
+  const chain = mergeAliases([P('10', '翡翠东方'), P('11', '万科翡翠东方', { geoDistrict: '' })], dn)
+  assert.equal(key(chain[1]), '320211|翡翠东方', '本市前缀 + 开发商前缀叠加也能合并')
   const solo = mergeAliases([P('9', '万科翡翠东方')], dn)
   assert.equal(solo[0].community, '万科翡翠东方', '没有短名小区时不合并')
 })

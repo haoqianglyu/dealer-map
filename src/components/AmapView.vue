@@ -466,12 +466,13 @@ function renderLabels() {
 // 聚合（cluster）分支重写标记时请保留这一做法。
 const TAP_SLOP = 12 // px（屏幕像素）
 let downAt = null // 最近一次 pointerdown 的屏幕坐标（onPopDown 捕获阶段记录）
+let dragged = false // 本次按下后曾移出 TAP_SLOP（拖出去再拖回原处抬起也不算点）
 function tappable(html, onTap) {
   const box = document.createElement('div')
   box.innerHTML = html.trim()
   const node = box.firstElementChild
   node.addEventListener('click', (e) => {
-    if (downAt && Math.hypot(e.clientX - downAt[0], e.clientY - downAt[1]) > TAP_SLOP * k()) return
+    if (dragged || (downAt && Math.hypot(e.clientX - downAt[0], e.clientY - downAt[1]) > TAP_SLOP * k())) return
     e.stopPropagation()
     onTap()
   })
@@ -777,13 +778,17 @@ function onMoveGuard(e) {
   if (!downOnMarker || !downAt) return
   const t = e.touches ? e.touches[0] : e
   if (Math.hypot(t.clientX - downAt[0], t.clientY - downAt[1]) <= TAP_SLOP * k()) e.stopPropagation()
-  else downOnMarker = false
+  else {
+    downOnMarker = false
+    dragged = true
+  }
 }
 const endGuard = () => (downOnMarker = false)
 
 // × 用 pointerdown 直接关闭（捕获阶段，高德 InfoWindow 内部吞掉 click 时也可靠）
 function onPopDown(e) {
   downAt = [e.clientX, e.clientY]
+  dragged = false
   downOnMarker = Boolean(e.target.closest && e.target.closest('.dm-hit'))
   // 用户开始拖动 / 点地图：停掉进行中的快速平移，不与手势抢视野
   if (!inPop(e.target)) stopPan()
@@ -850,6 +855,7 @@ onMounted(() => {
   info = new AMap.InfoWindow({ isCustom: true, autoMove: false, offset: new AMap.Pixel(0, -22 * k()), anchor: 'bottom-center' })
   el.value.style.setProperty('--k', k())
   info.on('close', () => {
+    stopPan() // 弹窗关了，避让平移没有意义了（否则剩下的帧还会改中心）
     pop = null
     clearPopMq()
     map && map.setStatus({ scrollWheel: true, dragEnable: true, doubleClickZoom: true })
@@ -859,6 +865,7 @@ onMounted(() => {
   level = levelFor(map.getZoom())
   applyFeatures()
   rebuildIndexes()
+  map.on('zoomstart', stopPan) // 滚轮 / 双击缩放：不与进行中的避让平移抢中心
   map.on('zoomend', onZoom)
   map.on('moveend', onMove)
   map.on('click', () => info.close())
