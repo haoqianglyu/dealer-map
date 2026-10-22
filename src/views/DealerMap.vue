@@ -119,7 +119,7 @@
       <!-- 地图右下状态行 -->
       <div class="status">
         <span v-if="AMapRef && geoPending > 0" class="ring" />
-        <template v-if="allProjects.length">已定位 {{ fmtNumber(locatedCount) }} / {{ fmtNumber(groups.length) }} 小区<template v-if="onlineLine"> · {{ onlineLine }}</template><template v-if="alarmLine"> · <em :class="alarmLine.cls">{{ alarmLine.text }}</em></template></template>
+        <template v-if="allProjects.length">已上图 {{ fmtNumber(locatedCount) }} / {{ fmtNumber(communityCount) }} 小区<template v-if="onlineLine"> · {{ onlineLine }}</template><template v-if="alarmLine"> · <em :class="alarmLine.cls">{{ alarmLine.text }}</em></template></template>
         <template v-else>{{ loading ? '正在加载项目…' : '' }}</template>
       </div>
 
@@ -172,12 +172,17 @@
           </div>
         </TechPanel>
 
-        <TechPanel class="p-area" :title="cityName ? `${cityName} · 各区项目` : '各区项目'" :loading="loading && !allProjects.length">
+        <TechPanel class="p-area" :loading="loading && !allProjects.length">
+          <template #title>
+            {{ cityName ? `${cityName} · 各区项目` : '各区项目' }}
+            <!-- 全部城市：面板只列主城市，写明「本城 / 全部」，与 KPI 项目数的关系一目了然 -->
+            <small v-if="areaTotal.show">{{ fmtNumber(areaTotal.city) }} / {{ fmtNumber(areaTotal.all) }}</small>
+          </template>
           <!-- 全部区县直接列出（紧凑行高）；放不下时面板内滚动（滚轮不会缩放地图） -->
           <div v-if="areaRows.length" class="rows">
-            <div v-for="r in areaRows" :key="r.name" class="row">
+            <div v-for="r in areaRows" :key="r.name" class="row" :class="{ 'row--none': r.none }">
               <span class="name">{{ r.name }}</span>
-              <span class="track"><i :style="{ width: r.pct + '%' }" /></span>
+              <span class="track"><i v-if="!r.none" :style="{ width: r.pct + '%' }" /></span>
               <span class="val">{{ fmtNumber(r.count) }}</span><span class="area">{{ fmtArea(r.area) }}</span>
             </div>
           </div>
@@ -512,7 +517,9 @@ const communities = computed(() =>
 const districtMarkers = computed(() => {
   const m = new Map()
   for (const g of groups.value) {
-    const k = g.areaDistrict || 'none'
+    // 区县未填的项目不上图（否则会在城市中心画一个叫「区县未填」的圈，像一个地名）：它们在「各区项目」面板末行单列
+    if (!g.areaDistrict) continue
+    const k = g.areaDistrict
     let d = m.get(k)
     if (!d) {
       d = { key: k, lnglat: districtCenter(g.areaDistrict), label: g.districtName, projects: [], points: [], unlocated: 0, unlocatedProjects: [] }
@@ -537,7 +544,9 @@ const fallbackPoints = computed(() =>
 
 const geoDone = computed(() => groups.value.filter((g) => geoResults[g.key] || !g.queries.length).length)
 const geoPending = computed(() => groups.value.length - geoDone.value)
-const locatedCount = computed(() => groups.value.filter((g) => geoResults[g.key]?.lnglat).length)
+// 「小区」统一口径 = 有小区名的组（KPI 小区数 / 状态行分母同源；「未识别小区」按项目单列的组不算）
+const communityCount = computed(() => groups.value.filter((g) => g.community).length)
+const locatedCount = computed(() => groups.value.filter((g) => g.community && geoResults[g.key]?.lnglat).length)
 
 // ---------- 初始视野 / 切换城市：适配到主城市所有区县（避开侧栏） ----------
 const sameCity = (district, city) => district && city && String(district).slice(0, 4) === String(city).slice(0, 4)
@@ -659,7 +668,7 @@ function focusAlarm(a) {
 const sum = (k) => projects.value.reduce((s, p) => s + (Number(p[k]) || 0), 0)
 const kpiRaw = computed(() => ({
   projects: projects.value.length,
-  communities: groups.value.filter((g) => g.community).length,
+  communities: communityCount.value,
   area: sum('area'),
   rooms: sum('rooms'),
   devices: sum('devices'),
@@ -717,9 +726,20 @@ const areaRows = computed(() => {
     o.area += p.area
     m.set(k, o)
   }
+  // 区县未填：放末行（灰字、无进度条），不参与排序 / 比例
+  const none = m.get('none')
+  m.delete('none')
   const rows = [...m.values()].sort((a, b) => b.count - a.count)
   const max = Math.max(1, ...rows.map((r) => r.count))
-  return rows.map((r) => ({ ...r, pct: Math.max(2, (r.count / max) * 100) }))
+  const out = rows.map((r) => ({ ...r, pct: Math.max(2, (r.count / max) * 100) }))
+  if (none) out.push({ ...none, name: '区县未填', none: true })
+  return out
+})
+
+const areaTotal = computed(() => {
+  const city = areaRows.value.reduce((n, r) => n + r.count, 0)
+  const all = projects.value.length
+  return { show: !regionFilter.value && all > city, city, all }
 })
 
 const timeStats = computed(() => {
@@ -1891,6 +1911,17 @@ onBeforeUnmount(() => {
   }
   .row:first-child .track i {
     background: var(--dm-accent);
+  }
+  /* 区县未填：灰字、无进度条（两主题都走 token） */
+  .row--none {
+    .track {
+      visibility: hidden;
+    }
+    .name,
+    .val {
+      color: var(--dm-text-3);
+      font-weight: 400;
+    }
   }
   .val {
     text-align: right;

@@ -56,7 +56,7 @@ export function toProject(raw) {
     city: cityCode,
     cityName: city?.name || '',
     district: districtCode, // 展示 / 统计用区县
-    districtName: district?.name || '未填区县',
+    districtName: district?.name || '区县未填',
     geoDistrict, // 地理编码范围（区县 adcode；'' = 全市范围）
     type: appTypeName(raw.app_name),
     category: raw.app_category_name || '',
