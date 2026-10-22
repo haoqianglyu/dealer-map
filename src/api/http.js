@@ -38,9 +38,10 @@ export function refreshSession({ ifToken } = {}) {
 }
 
 // 回登录页并整页重载：清掉 keep-alive 的地图页实例与内存里的账号数据（换账号登录不会看到上一个账号的视图）
-export function toLogin(reason = '') {
+// tone：'warn'（会话过期等，警示色）| 'info'（主动退出，灰字）
+export function toLogin(reason = '', tone = 'warn') {
   session.clear()
-  if (reason) sessionStorage.setItem('dm_login_reason', reason)
+  if (reason) sessionStorage.setItem('dm_login_reason', JSON.stringify({ text: reason, tone }))
   if (!location.hash.startsWith('#/login')) location.hash = '#/login'
   location.reload()
 }

@@ -3,7 +3,7 @@
     <div class="canvas" :style="screenStyle">
       <!-- 左：品牌舞台（预烘焙的粗粒度灯光点，仅 0.01° 网格计数，无小区名；登录前不请求任何项目数据） -->
       <div class="stage">
-        <canvas ref="cv" class="stage__lights" :class="{ on: lightsOn }" />
+        <LightsCanvas class="stage__lights" :class="{ on: lightsOn }" />
         <div class="stage__vignette" />
         <BrandLogo v-if="brand" :name="brand.name" :height="44" class="stage__logo" />
         <div class="stage__copy">
@@ -18,7 +18,7 @@
         <form class="card" :class="{ shake }" novalidate @submit.prevent="submit" @animationend="shake = false">
           <h2>登录</h2>
           <p class="card__sub">使用平台账号登录，可见项目由账号权限决定</p>
-          <p v-if="notice" class="card__notice" role="status">{{ notice }}</p>
+          <p v-if="notice" class="card__notice" :class="{ 'card__notice--info': noticeTone === 'info' }" role="status">{{ notice }}</p>
 
           <div class="field" :class="{ err: errs.mobile }">
             <label for="lg-mobile">账号</label>
@@ -65,16 +65,16 @@
 </template>
 
 <script setup>
-import { ref, reactive, onMounted, onBeforeUnmount } from 'vue'
+import { ref, reactive, onMounted } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { login } from '@/api'
 import { errorText } from '@/api/http'
 import { session } from '@/api/session'
+import { prefetchAfterLogin, warmAmap } from '@/api/prefetch'
 import { useScreenScale } from '@/composables/useScreenScale'
 import { defaultBrand } from '@/config/brand'
 import BrandLogo from '@/components/BrandLogo.vue'
-import LIGHTS from '@/assets/login-lights.json'
-import { theme } from '@/composables/useTheme'
+import LightsCanvas from '@/components/LightsCanvas.vue'
 
 const { style: screenStyle } = useScreenScale()
 const router = useRouter()
@@ -92,12 +92,25 @@ const busy = ref(false)
 const done = ref(false)
 const shake = ref(false)
 const errs = reactive({ mobile: '', password: '' })
-const notice = ref(sessionStorage.getItem('dm_login_reason') || '')
+// 回登录页的原因：{ text, tone }（旧版本存的是纯文本 = 警示）
+const readReason = () => {
+  const raw = sessionStorage.getItem('dm_login_reason') || ''
+  try {
+    const o = JSON.parse(raw)
+    if (o && typeof o.text === 'string') return o
+  } catch {
+    /* 纯文本 */
+  }
+  return { text: raw, tone: 'warn' }
+}
+const reason = readReason()
+const notice = ref(reason.text)
+const noticeTone = reason.tone
 sessionStorage.removeItem('dm_login_reason')
 const mobileEl = ref(null)
 const pwdEl = ref(null)
 
-document.title = '登录 · 项目分布大屏'
+document.title = `登录 · ${brand ? brand.name : '项目分布大屏'}`
 
 const capsCheck = (e) => (caps.value = Boolean(e.getModifierState && e.getModifierState('CapsLock')))
 
@@ -117,6 +130,7 @@ async function submit() {
     const data = await login(mobile.value, password.value)
     if (!data?.access_token) throw new Error('登录失败')
     session.save(data, { newLogin: true })
+    prefetchAfterLogin() // 立刻预热 /me、项目、坐标缓存、高德、地图 chunk（不等成功勾）
     remember.value ? localStorage.setItem(ACCOUNT_KEY, mobile.value) : localStorage.removeItem(ACCOUNT_KEY)
     localStorage.setItem('dm_remember', remember.value ? '1' : '0')
     password.value = ''
@@ -131,66 +145,13 @@ async function submit() {
   }
 }
 
-// ---------- 舞台灯光（canvas，复用热力暖光的三层径向渐变 + lighter 叠加，4 s 缓慢呼吸） ----------
-const cv = ref(null)
 const lightsOn = ref(false)
-let raf = 0
-const reduced = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches
-const HALO = [255, 184, 87]
-const CORE = [255, 222, 158]
-const FIL = [255, 245, 219]
-// 亮色「墨染」（§5.3）：赭石三色，元素与层内都 multiply
-const INK = { halo: [196, 138, 46], core: [168, 106, 24], fil: [107, 61, 8], a: [0.32, 0.5, 0.9], op: 'multiply' }
-const GLOW = { halo: HALO, core: CORE, fil: FIL, a: [0.42, 0.6, 0.9], op: 'lighter' }
-function glow(ctx, x, y, r, [R, G, B], a) {
-  const g = ctx.createRadialGradient(x, y, 0, x, y, r)
-  g.addColorStop(0, `rgba(${R},${G},${B},${a})`)
-  g.addColorStop(0.5, `rgba(${R},${G},${B},${a / 2})`)
-  g.addColorStop(1, `rgba(${R},${G},${B},0)`)
-  ctx.fillStyle = g
-  ctx.beginPath()
-  ctx.arc(x, y, r, 0, Math.PI * 2)
-  ctx.fill()
-}
-function draw(t = 0) {
-  const c = cv.value
-  if (!c) return
-  const w = c.clientWidth
-  const h = c.clientHeight
-  const dpr = Math.min(2, window.devicePixelRatio || 1)
-  if (c.width !== Math.round(w * dpr)) {
-    c.width = Math.round(w * dpr)
-    c.height = Math.round(h * dpr)
-  }
-  const ctx = c.getContext('2d')
-  ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
-  ctx.clearRect(0, 0, w, h)
-  const m = theme.value === 'light' ? INK : GLOW
-  const blend = m === INK ? 'multiply' : ''
-  if (c.style.mixBlendMode !== blend) c.style.mixBlendMode = blend
-  ctx.globalCompositeOperation = m.op
-  const k = (h * 0.95) / 1.6 // 像素 / 纬度
-  const cx = w * 0.55
-  const cy = h * 0.52
-  const breath = reduced ? 1 : 0.92 + 0.08 * Math.sin((t / 4000) * Math.PI * 2)
-  for (const [lng, lat, n] of LIGHTS) {
-    const x = cx + (lng - 120.3) * k * 0.853
-    const y = cy - (lat - 31.55) * k
-    if (x < -40 || y < -40 || x > w + 40 || y > h + 40) continue
-    const r = 10 + Math.sqrt(n) * 9
-    glow(ctx, x, y, r, m.halo, m.a[0] * breath)
-    glow(ctx, x, y, Math.min(r * 0.3, 7), m.core, m.a[1])
-    glow(ctx, x, y, 2.4, m.fil, m.a[2])
-  }
-  ctx.globalCompositeOperation = 'source-over'
-  if (!reduced) raf = requestAnimationFrame(draw)
-}
 onMounted(() => {
   ;(mobile.value ? pwdEl : mobileEl).value?.focus()
   setTimeout(() => (lightsOn.value = true), 200)
-  raf = requestAnimationFrame(draw)
+  // 高德 JS 不依赖登录：表单就绪后空闲时预载，登录后地图更快出现
+  setTimeout(warmAmap, 1500)
 })
-onBeforeUnmount(() => cancelAnimationFrame(raf))
 </script>
 
 <style scoped lang="scss">
@@ -229,6 +190,11 @@ onBeforeUnmount(() => cancelAnimationFrame(raf))
     color: #8a5200;
     background: rgba(161, 98, 7, 0.08);
     border-color: rgba(161, 98, 7, 0.35);
+    &--info {
+      color: var(--dm-text-3);
+      background: rgba(16, 33, 58, 0.04);
+      border-color: rgba(16, 33, 58, 0.12);
+    }
   }
   .field {
     label {
@@ -414,6 +380,12 @@ onBeforeUnmount(() => cancelAnimationFrame(raf))
     background: rgba(255, 199, 34, 0.08);
     border: 1px solid rgba(255, 199, 34, 0.3);
     border-radius: 8px;
+    /* 主动退出：中性灰（不是警示） */
+    &--info {
+      color: var(--dm-text-3);
+      background: rgba(120, 170, 255, 0.06);
+      border-color: rgba(120, 170, 255, 0.16);
+    }
   }
 }
 @keyframes card-in {

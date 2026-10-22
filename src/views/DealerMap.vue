@@ -30,9 +30,13 @@
     <!-- 首屏：地图瓦片到位前的品牌底（避免白底网格 / 黑→灰→蓝闪烁） -->
     <transition name="fade">
       <div v-if="!mapReady && !amapNotice" class="boot">
-        <BrandLogo v-if="brand" :name="brand.name" :height="40" class="boot__logo" />
-        <span class="boot__ring" />
-        <span class="boot__text">{{ loading ? '正在加载项目数据…' : '正在加载地图…' }}</span>
+        <!-- 与登录舞台同一片灯光、同一位置：登录 → 地图交叉淡化时灯光接上，瓦片就绪后整罩淡出露出真地图 -->
+        <LightsCanvas class="boot__lights" :k="scale" />
+        <div class="boot__mid" :style="{ right: `${avoid.right}px` }">
+          <BrandLogo v-if="brand" :name="brand.name" :height="40" class="boot__logo" />
+          <span class="boot__ring" />
+          <span class="boot__text">{{ bootText }}</span>
+        </div>
       </div>
     </transition>
 
@@ -41,11 +45,12 @@
       <header class="topbar">
         <div class="brand">
           <transition name="fade" mode="out-in">
-            <span v-if="!profileLoaded" key="ph" class="brand__ph" />
-            <span v-else-if="brandFor(scopeTitle)" key="logo" class="brand__logo">
+            <!-- 资料返回前就显示登录品牌的 logo（0.35 透明度），返回后淡到 1；不是空白占位 → logo 的跳变 -->
+            <span v-if="topLogo" key="logo" class="brand__logo" :class="{ pending: !profileLoaded }">
               <h1 class="sr-only">{{ scopeTitle }}</h1>
-              <BrandLogo :name="scopeTitle" :height="32" />
+              <BrandLogo :name="topLogo" :height="32" />
             </span>
+            <span v-else-if="!profileLoaded" key="ph" class="brand__ph" />
             <h1 v-else key="txt" class="brand__txt">{{ scopeTitle }}</h1>
           </transition>
           <span class="brand__sep" />
@@ -53,7 +58,7 @@
             v-if="cityOptions.length > 1 || regionFilter"
             variant="title"
             :model-value="regionFilter"
-            :options="[{ value: '', label: '全部城市', count: allProjects.length }, ...cityOptions.map((c) => ({ value: c.region, label: c.name, count: c.count }))]"
+            :options="cityPickerOptions"
             label="城市"
             @update:model-value="changeRegion"
           />
@@ -202,6 +207,7 @@ import { useRouter, useRoute } from 'vue-router'
 import TechPanel from '@/components/TechPanel.vue'
 import CityPicker from '@/components/CityPicker.vue'
 import BrandLogo from '@/components/BrandLogo.vue'
+import LightsCanvas from '@/components/LightsCanvas.vue'
 import { useScreenScale } from '@/composables/useScreenScale'
 import { brandFor, defaultBrand } from '@/config/brand'
 import EChart from '@/components/EChart.vue'
@@ -211,6 +217,7 @@ import { listAlarms, listOnlineProjectIds, me, getDistributor, pickProjectEndpoi
 import { toLogin, errorText } from '@/api/http'
 import { toProject, mergeDeveloperAliases } from '@/geo/model'
 import { mergeProjects } from '@/api/merge'
+import { takePrefetch } from '@/api/prefetch'
 import { loadShared, postShared } from '@/geo/shared'
 import { hasAmapKey, loadAmap } from '@/geo/amap'
 import { loadOverrides, loadSeed, lookupLocal, createGeocodeQueue, jitter } from '@/geo/geocoder'
@@ -389,6 +396,7 @@ const DEFAULT_REGION = '320000/320200'
 if (typeof route.query.region !== 'string') router.replace({ query: { ...route.query, region: DEFAULT_REGION } })
 let defaultChecked = false
 const scopeTitle = computed(() => distributor.value?.name || '项目分布大屏')
+const topLogo = computed(() => (profileLoaded.value ? (brandFor(scopeTitle.value) ? scopeTitle.value : '') : brand ? brand.name : ''))
 const scopeHint = computed(() => (distributor.value ? '经销商账号' : '平台账号'))
 
 const cityOptions = computed(() => {
@@ -403,6 +411,16 @@ const cityOptions = computed(() => {
   return [...m.values()].sort((a, b) => b.count - a.count)
 })
 
+// 城市下拉：项目还没到时 cityOptions 为空，选中的城市（URL region）不在选项里会显示成「全部城市」——补一项按行政区划名显示
+const cityPickerOptions = computed(() => {
+  const opts = [{ value: '', label: '全部城市', count: allProjects.value.length }, ...cityOptions.value.map((c) => ({ value: c.region, label: c.name, count: c.count }))]
+  const r = regionFilter.value
+  if (r && !opts.some((o) => o.value === r)) {
+    const name = regionInfo(r.split('/')[1])?.name
+    if (name) opts.push({ value: r, label: name, count: 0 })
+  }
+  return opts
+})
 // 主城市：所选城市 → 经销商所在城市 → 项目最多的城市
 const cityCode = computed(() => {
   const fromFilter = regionFilter.value.split('/')[1]
@@ -664,7 +682,14 @@ function useTween(get) {
 }
 const tw = Object.fromEntries(['projects', 'communities', 'area', 'rooms', 'devices'].map((k) => [k, useTween(() => kpiRaw.value[k])]))
 const fmtAreaParts = (v) => (v >= 10000 ? [(v / 10000).toFixed(2), '万㎡'] : [fmtNumber(Math.round(v)), '㎡'])
+// 加载罩文字：有总数后写进度
+const bootText = computed(() => {
+  const n = allProjects.value.length
+  if (totalVisible.value && n < totalVisible.value) return `已加载 ${fmtNumber(n)} / ${fmtNumber(totalVisible.value)} 个项目`
+  return loading.value ? '正在加载项目数据…' : '正在加载地图…'
+})
 const kpiSub = computed(() => {
+  if (!allProjects.value.length) return '' // 加载中不写「共 0」
   if (totalVisible.value > allProjects.value.length) return `已加载 ${fmtNumber(allProjects.value.length)} / ${fmtNumber(totalVisible.value)}`
   if (regionFilter.value || distributorFilter.value) return `${cityName.value || ''} / 共 ${fmtNumber(allProjects.value.length)}`
   return ''
@@ -745,8 +770,10 @@ const clockTimer = setInterval(tick, 10 * 1000)
 // ---------- 加载 ----------
 let endpoint = null
 
+// 登录页拿到 token 时已预热的请求（api/prefetch.js）：首次挂载取走复用
+let pre = null
 async function loadProfile() {
-  const data = await me()
+  const data = await (pre?.me || me())
   const u = data?.user_entity || {}
   userName.value = u.name || '已登录'
   endpoint = pickProjectEndpoint(data?.permission_paths || [])
@@ -774,18 +801,17 @@ async function loadProjects() {
       allProjects.value = []
       distributorFilter.value = ''
       const seen = new Set()
-      await listAllProjects(endpoint, {
-        region: '',
-        limit: PAGE_SIZE,
-        concurrency: 3,
-        isStale: stale,
-        onPage: (list, total) => {
-          if (stale()) return
-          totalVisible.value = parseInt(total, 10) || 0
-          allProjects.value = mergeProjects(allProjects.value, list, seen, toProject)
-          loading.value = false
-        },
-      })
+      const onPage = (list, total) => {
+        if (stale()) return
+        totalVisible.value = parseInt(total, 10) || 0
+        allProjects.value = mergeProjects(allProjects.value, list, seen, toProject)
+        loading.value = false
+      }
+      // 首次加载复用登录时已开始的翻页（同一接口）；之后（重试 / 重新加载）正常请求
+      const stream = pre?.projects
+      if (pre) pre.projects = null
+      if (stream && (await stream.endpointP.catch(() => null)) === endpoint) await stream.consume(onPage)
+      else await listAllProjects(endpoint, { region: '', limit: PAGE_SIZE, concurrency: 3, isStale: stale, onPage })
       if (!stale()) {
         allProjects.value = mergeProjects([], allProjects.value, new Set()) // 收尾再按 id 去一次重
         totalVisible.value = allProjects.value.length
@@ -886,7 +912,7 @@ function changeRegion(region) {
 // 退出：整页重载回登录页（销毁 keep-alive 的地图实例、弹窗与内存中的项目/告警数据；本机坐标缓存保留）
 function logout() {
   queue && queue.stop()
-  toLogin()
+  toLogin('已退出登录', 'info')
 }
 
 function reloadAll() {
@@ -914,8 +940,9 @@ watch(distributorOptions, loadDistributorNames)
 
 onMounted(async () => {
   // 并行：高德 JS、坐标缓存与账号资料同时开始；项目列表只依赖 /me（选接口）
+  pre = takePrefetch()
   const amapP = initAmap()
-  const geoP = Promise.all([loadOverrides(), loadSeed(), loadShared()])
+  const geoP = Promise.all([loadOverrides(), loadSeed(), pre?.shared || loadShared()])
   try {
     await loadProfile()
   } catch (e) {
@@ -1128,6 +1155,27 @@ onBeforeUnmount(() => {
   gap: 18px;
   pointer-events: none;
   background: radial-gradient(60% 70% at 50% 50%, rgba(27, 98, 216, 0.14), transparent 70%), rgba(6, 16, 36, 0.92);
+  /* 灯光：与登录舞台同几何（左 62%、整高），透明度同舞台 */
+  &__lights {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 62%;
+    height: 100%;
+    opacity: 0.85;
+  }
+  /* 文字居中在侧栏左侧的地图区 */
+  &__mid {
+    position: absolute;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 18px;
+  }
   &__logo {
     animation: breathe 2.4s ease-in-out infinite;
   }
@@ -1211,6 +1259,10 @@ onBeforeUnmount(() => {
   }
   &__logo {
     display: flex;
+    transition: opacity 0.4s ease;
+    &.pending {
+      opacity: 0.35;
+    }
   }
   &__txt {
     font-size: 22px;
