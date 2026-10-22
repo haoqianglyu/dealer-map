@@ -114,7 +114,7 @@
       <!-- 地图右下状态行 -->
       <div class="status">
         <span v-if="AMapRef && geoPending > 0" class="ring" />
-        <template v-if="allProjects.length">已定位 {{ fmtNumber(locatedCount) }} / {{ fmtNumber(groups.length) }} 小区<template v-if="onlineLine"> · {{ onlineLine }}</template> · 告警 {{ alarmUpdated || '—' }} 更新</template>
+        <template v-if="allProjects.length">已定位 {{ fmtNumber(locatedCount) }} / {{ fmtNumber(groups.length) }} 小区<template v-if="onlineLine"> · {{ onlineLine }}</template><template v-if="alarmLine"> · <em :class="alarmLine.cls">{{ alarmLine.text }}</em></template></template>
         <template v-else>{{ loading ? '正在加载项目…' : '' }}</template>
       </div>
 
@@ -135,9 +135,14 @@
           <template #title>
             一级告警
             <em v-if="activeAlarmCount && !alarmError" class="pill">进行中 {{ activeAlarmCount }}</em>
-            <small v-if="alarmsLoaded && allProjects.length && !alarmError">/ {{ alarmJoined.length }} · 近 10 天</small>
+            <small v-if="alarmsLoaded && allProjects.length && !alarmError">近 10 天 {{ fmtNumber(alarmJoined.length) }} 条</small>
           </template>
-          <p v-if="alarmError" class="muted">{{ alarmError }}</p>
+          <!-- 明确的错误态（不是「近 10 天无一级告警」）：数据过期 / 从未取到 → 警示块；无权限 → 灰字 -->
+          <div v-if="alarmError && alarmErrorKind !== 'forbidden'" class="alarm-err" role="status">
+            <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path d="M12 3.5 2.8 19.5h18.4L12 3.5z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" /><path d="M12 10v4.2M12 16.6v.4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" /></svg>
+            <b>告警数据无法更新</b><small>{{ alarmError }}</small>
+          </div>
+          <p v-else-if="alarmError" class="muted">{{ alarmError }}</p>
           <ul v-else-if="alarmFeed.length" ref="feedEl" class="alarms">
             <li
               v-for="a in alarmFeed"
@@ -211,6 +216,7 @@ import { hasAmapKey, loadAmap } from '@/geo/amap'
 import { loadOverrides, loadSeed, lookupLocal, createGeocodeQueue, jitter } from '@/geo/geocoder'
 import { regionInfo } from '@/utils/region'
 import { STATES, applyStates, alarmStates, isActiveAlarm, alarmTag } from '@/geo/states'
+import { createAlarmTracker, retryDelay } from '@/geo/alarmPoll'
 import { applyOnline, groupsOnlineStats, createOnlineTracker, sane } from '@/geo/online'
 import { fmtNumber, fmtArea } from '@/utils/format'
 import { tooltipStyle, categoryAxis, valueAxis, isLight } from '@/utils/chartTheme'
@@ -275,27 +281,51 @@ const mode = ref('markers')
 const alarms = shallowRef([])
 const alarmError = ref('')
 const alarmsLoaded = ref(false)
-const alarmUpdated = ref('')
+const alarmUpdated = ref('') // 最后一次成功的 hh:mm
+const alarmStale = ref(false) // 最近一次失败、沿用旧数据中（≤ 5 分钟）
+const alarmErrorKind = ref('')
+// 状态行告警段：正常「告警 hh:mm 更新」；沿用中「告警 hh:mm 未更新」（警示色）；过期「告警 hh:mm 起未更新」；从未成功过不显示
+const alarmLine = computed(() => {
+  if (!alarmUpdated.value || alarmErrorKind.value === 'forbidden') return null
+  if (alarmErrorKind.value) return { text: `告警 ${alarmUpdated.value} 起未更新`, cls: 'st-err' }
+  if (alarmStale.value) return { text: `告警 ${alarmUpdated.value} 未更新`, cls: 'st-warn' }
+  return { text: `告警 ${alarmUpdated.value} 更新`, cls: '' }
+})
 const alarmStateMap = computed(() => alarmStates(alarms.value))
 const focus = shallowRef(null)
 const fit = shallowRef(null)
 const heatMetric = ref('projects')
 let alarmTimer = null
 const hhmm = (d = new Date()) => `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
-async function loadAlarms() {
-  try {
-    alarms.value = await listAlarms({ level: '1', days: 10 })
-    alarmError.value = ''
-    alarmUpdated.value = hhmm()
-  } catch (e) {
-    // 403 到这里已是「续期后重试仍 403」= 真无权限。出错时不留旧数据：面板标题的「进行中 / 总数」与地图角标一起清空，
-    // 不让过期的计数和错误提示同时出现
-    alarms.value = []
-    alarmUpdated.value = ''
-    alarmError.value = e?.response?.status === 403 ? '当前账号无告警查看权限' : '告警加载失败，稍后自动重试'
-  } finally {
+// 失败不清数据（geo/alarmPoll.js）：5 分钟内沿用 + 「告警 hh:mm 未更新」；之后清空并显示明确的错误态；403 立即清空
+const alarmTracker = createAlarmTracker()
+let alarmInflight = null
+let alarmRetry = 0
+function applyAlarmView(v) {
+  if (alarms.value !== v.alarms) alarms.value = v.alarms
+  alarmUpdated.value = v.okAt ? hhmm(new Date(v.okAt)) : ''
+  alarmStale.value = Boolean(v.staleSince) && !v.error
+  alarmErrorKind.value = v.error
+  alarmError.value =
+    v.error === 'forbidden' ? '当前账号无告警查看权限' : v.error === 'expired' ? `自 ${alarmUpdated.value} 起未取到新数据，正在自动重试` : v.error === 'failed' ? '告警加载失败，正在自动重试' : ''
+}
+function loadAlarms() {
+  if (alarmInflight) return alarmInflight
+  clearTimeout(alarmRetry)
+  alarmInflight = (async () => {
+    let v
+    try {
+      v = alarmTracker.ok(await listAlarms({ level: '1', days: 10 }))
+    } catch (e) {
+      // 403 到这里已是「续期后重试仍 403」= 真无权限
+      v = alarmTracker.fail(e?.response?.status)
+      // 单独退避重试（10 → 20 → 40 → 60 s），不等整个 60 秒周期；无权限不重试
+      if (v.error !== 'forbidden') alarmRetry = setTimeout(loadAlarms, retryDelay(v.fails))
+    }
+    applyAlarmView(v)
     alarmsLoaded.value = true
-  }
+  })().finally(() => (alarmInflight = null))
+  return alarmInflight
 }
 // ---------- 在线状态（与告警同节奏 60 秒刷新），docs/fable-offline.md ----------
 // 失败 / 返回空：沿用上一次结果最多 5 分钟（状态行提示「未更新」），之后 = 未知（不判任何项目离线，永不全灰）。
@@ -317,13 +347,20 @@ async function loadOnline() {
 const onlineExpiry = setInterval(() => {
   const v = onlineTracker.current()
   if (v !== onlineRaw.value) onlineRaw.value = v
+  applyAlarmView(alarmTracker.current())
 }, 15000)
 // 与本账号项目一个都对不上 → 当未知
 const onlineView = computed(() => sane(onlineRaw.value, allProjects.value))
+let onlineInflight = null
 function refreshStatus() {
   loadAlarms()
-  loadOnline()
+  if (!onlineInflight) onlineInflight = loadOnline().finally(() => (onlineInflight = null))
 }
+// 网络恢复 / 标签页回到前台：立即刷新告警与在线状态（不等下一个 60 秒周期）
+const onNetBack = () => refreshStatus()
+const onVisible = () => document.visibilityState === 'visible' && alarmsLoaded.value && refreshStatus()
+window.addEventListener('online', onNetBack)
+document.addEventListener('visibilitychange', onVisible)
 const timeMode = ref('year')
 const AMapRef = shallowRef(null)
 const amapNotice = ref(hasAmapKey() ? '' : '缺少高德 Key：请在 .env.local 配置 VITE_AMAP_KEY / VITE_AMAP_SECURITY 后重启。当前以区县中心近似显示。')
@@ -902,6 +939,9 @@ onBeforeUnmount(() => {
   clearInterval(clockTimer)
   clearInterval(onlineExpiry)
   clearInterval(alarmTimer)
+  clearTimeout(alarmRetry)
+  window.removeEventListener('online', onNetBack)
+  document.removeEventListener('visibilitychange', onVisible)
   queue && queue.stop()
 })
 </script>
@@ -1461,6 +1501,16 @@ onBeforeUnmount(() => {
     border-radius: 50%;
     animation: spin 0.9s linear infinite;
   }
+  em {
+    font-style: normal;
+  }
+  /* 告警沿用中 / 过期：与在线状态「未更新」同一写法，警示色（两主题走 token，深色回退原警示黄 / 告警红） */
+  .st-warn {
+    color: var(--dm-warn-text, #ffc722);
+  }
+  .st-err {
+    color: var(--dm-alarm-text, #ff7a7c);
+  }
 }
 
 /* ---------- 侧栏 ---------- */
@@ -1587,6 +1637,26 @@ onBeforeUnmount(() => {
   align-items: center;
   justify-content: center;
   gap: 6px;
+  b {
+    font-size: 14px;
+    font-weight: 500;
+    color: var(--dm-text);
+  }
+  small {
+    font-size: 12px;
+    color: var(--dm-text-3);
+  }
+}
+.alarm-err {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 0 16px;
+  text-align: center;
+  color: var(--dm-warn-text, #ffc722);
   b {
     font-size: 14px;
     font-weight: 500;
