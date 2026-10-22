@@ -5,6 +5,7 @@
 // 纯函数（不依赖高德），便于单测；AmapView 负责投影与 DOM。
 import Supercluster from 'supercluster'
 import { STATES, stateRank, worstState, alarmCount, hasNewAlarm } from './states.js'
+import { allOffline } from './online.js'
 
 export const ZOOM_NAMED = 14
 export const ZOOM_TERMINAL = 16
@@ -34,12 +35,13 @@ export const stateOfRank = (r) => RANK_STATE[r] || 'normal'
 const common = {
   extent: 256, // 高德按 256 px 瓦片计 zoom：extent 256 时 radius 的单位就是高德屏幕像素
   minPoints: 2,
-  map: (p) => ({ n: p.n, k: 1, rank: p.rank, alarms: p.alarms, pulse: p.pulse, top: p.name, topN: p.n, topRank: p.rank, dists: p.dist }),
+  map: (p) => ({ n: p.n, k: 1, rank: p.rank, alarms: p.alarms, pulse: p.pulse, off: p.off, top: p.name, topN: p.n, topRank: p.rank, dists: p.dist }),
   reduce: (acc, p) => {
     acc.n += p.n
     acc.k += p.k
     acc.alarms += p.alarms
     acc.pulse = acc.pulse || p.pulse
+    acc.off = acc.off && p.off ? 1 : 0 // 成员全部离线才灰
     // 名字取「最严重、其次项目最多」的成员（告警小区的名字优先露出）
     if (p.topRank > acc.topRank || (p.topRank === acc.topRank && p.topN > acc.topN)) {
       acc.top = p.top
@@ -68,6 +70,7 @@ export function buildIndexes(communities, k = 1) {
         rank: stateRank(worstState(c.projects)),
         alarms: alarmCount(c.projects),
         pulse: hasNewAlarm(c.projects),
+        off: allOffline(c.projects) ? 1 : 0,
         dist: c.districtName || '',
       },
     })
@@ -89,9 +92,9 @@ export function query(indexes, level, bbox, z) {
     const [lng, lat] = f.geometry.coordinates
     if (!p.cluster) {
       const c = indexes.byKey.get(p.key)
-      return { id: `p:${p.key}`, level, lnglat: c.lnglat, n: p.n, k: 1, rank: p.rank, state: stateOfRank(p.rank), alarms: p.alarms, pulse: p.pulse, top: p.name, dists: p.dist, key: p.key, idx }
+      return { id: `p:${p.key}`, level, lnglat: c.lnglat, n: p.n, k: 1, rank: p.rank, state: stateOfRank(p.rank), offline: Boolean(p.off), alarms: p.alarms, pulse: p.pulse, top: p.name, dists: p.dist, key: p.key, idx }
     }
-    return { id: `${tier}:${zq}:${r5(lng)},${r5(lat)}`, level, lnglat: [lng, lat], n: p.n, k: p.k, rank: p.rank, state: stateOfRank(p.rank), alarms: p.alarms, pulse: p.pulse, top: p.top, dists: p.dists, clusterId: p.cluster_id, idx }
+    return { id: `${tier}:${zq}:${r5(lng)},${r5(lat)}`, level, lnglat: [lng, lat], n: p.n, k: p.k, rank: p.rank, state: stateOfRank(p.rank), offline: Boolean(p.off), alarms: p.alarms, pulse: p.pulse, top: p.top, dists: p.dists, clusterId: p.cluster_id, idx }
   })
 }
 

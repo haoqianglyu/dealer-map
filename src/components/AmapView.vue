@@ -11,6 +11,7 @@ import CONTEXT_CITIES from '@/data/cities-context.json'
 import { STATES, stateRank, worstState, alarmCount, hasNewAlarm, levelState, isActiveAlarm, alarmTag, NOTICE_COLOR } from '@/geo/states'
 import { buildIndexes, query, membersOf, expansionZoom, layoutLabels, circleSize, circleFont, zoomClusterFor, levelFor as levelAt, byPriority, ZOOM_TERMINAL, textWidth, mainMass, leafIndex, anyLeafKey, queryZoom, DOT_SIZE, pickRefreshTarget } from '@/geo/cluster'
 import { fmtNumber } from '@/utils/format'
+import { allOffline, offlineCount } from '@/geo/online'
 
 // 高德地图：自定义 HTML 标记 + 暖光热力。标记四个层级（docs/fable-clustering.md）：
 //   ① 区县（z < zoomCluster()，≈ 城市视野再放大一级）：每区一个汇总圈，数 = 该区全部项目（含未定位）；
@@ -61,6 +62,8 @@ const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<
 const zoomCluster = () => zoomClusterFor(fitZoom)
 const levelFor = (z) => levelAt(z, zoomCluster())
 
+// 标记颜色：全部离线（且无告警 / 预警）= 离线灰（--dm-offline），否则按最严重状态
+const markColor = (state, off) => (off ? 'var(--dm-offline)' : STATES[state].color)
 // 每个可点标记外包一个 ≥ 44 px 的透明点按区（遥控 / 触摸），圆的视觉尺寸不变
 const hitBox = (inner) => `<div class="dm-hit">${inner}</div>`
 const badgeHtml = (alarms) => (alarms ? `<span class="dm-mk__badge">${fmtNumber(alarms)} 告警</span>` : '')
@@ -128,11 +131,12 @@ function districtLabelSides(ds, fit) {
 function districtHtml(d, fit = 1, side = 'below') {
   const count = d.projects.length
   const state = worstState(d.projects)
+  const off = allOffline(d.projects)
   const size = Math.max(36, Math.round(districtSize(d) * fit))
-  const cls = ['dm-mk', `dm-mk--${state}`, 'dm-mk--district', count >= 1000 ? 'dm-mk--big' : '', hasNewAlarm(d.projects) ? 'dm-mk--pulse' : ''].join(' ')
+  const cls = ['dm-mk', `dm-mk--${state}`, off ? 'dm-mk--offline' : '', 'dm-mk--district', count >= 1000 ? 'dm-mk--big' : '', hasNewAlarm(d.projects) ? 'dm-mk--pulse' : ''].join(' ')
   // 角标只写「N 告警」（N = 该区全部进行中 1 级告警，含未定位小区的）；未定位不在圈上标，
   // 入口在告警列表（行内「未定位」标签 → 项目详情；点区县会滚到那条并闪一下）
-  return hitBox(`<div class="${cls}" style="--size:${size}px;--c:${STATES[state].color}">
+  return hitBox(`<div class="${cls}" style="--size:${size}px;--c:${markColor(state, off)}">
     <span class="dm-mk__n">${fmtNumber(count)}</span>${badgeHtml(alarmCount(d.projects))}
     <span class="dm-mk__label${side !== 'below' ? ` dm-mk__label--${side}` : ''}">${esc(d.label)}</span>
   </div>`)
@@ -141,10 +145,10 @@ function districtHtml(d, fit = 1, side = 'below') {
 function itemHtml(it, lay) {
   if (lay.dot) {
     // 被更高优先级的胶囊 / 圈压住：小点，无数字 / 角标（点击仍是它自己）
-    return hitBox(`<div class="dm-mk dm-mk--dot dm-mk--${it.state}" style="--size:${DOT_SIZE}px;--c:${STATES[it.state].color}"></div>`)
+    return hitBox(`<div class="dm-mk dm-mk--dot dm-mk--${it.state}${it.offline ? ' dm-mk--offline' : ''}" style="--size:${DOT_SIZE}px;--c:${markColor(it.state, it.offline)}"></div>`)
   }
   const S = circleSize(it.n)
-  const cls = ['dm-mk', `dm-mk--${it.state}`, lay.named ? 'dm-mk--named' : '', it.k > 1 ? 'dm-mk--cluster' : '', it.pulse ? 'dm-mk--pulse' : ''].join(' ')
+  const cls = ['dm-mk', `dm-mk--${it.state}`, it.offline ? 'dm-mk--offline' : '', lay.named ? 'dm-mk--named' : '', it.k > 1 ? 'dm-mk--cluster' : '', it.pulse ? 'dm-mk--pulse' : ''].join(' ')
   const label = lay.named
     ? `<span class="dm-mk__label">${esc(lay.label)}${lay.sub ? `<small>${esc(lay.sub)}</small>` : ''}</span>`
     : lay.side
@@ -152,7 +156,7 @@ function itemHtml(it, lay) {
       : lay.label
         ? `<span class="dm-mk__label dm-mk__label--sub">${esc(lay.label)}</span>`
         : ''
-  return hitBox(`<div class="${cls}" style="--size:${S}px;--fs:${circleFont(S)}px;--c:${STATES[it.state].color}">
+  return hitBox(`<div class="${cls}" style="--size:${S}px;--fs:${circleFont(S)}px;--c:${markColor(it.state, it.offline)}">
     <span class="dm-mk__n">${fmtNumber(it.n)}</span>${badgeHtml(it.alarms)}${label}
   </div>`)
 }
@@ -201,14 +205,27 @@ function alarmRows(p, open, more) {
 const POP_LIMIT = 5
 const GROUP_FIRST = 3
 const hasActive = (p) => (p.alarms || []).some(isActiveAlarm)
+// 行排序：告警 → 预警 → 离线 → 正常（离线对售后是待办，不沉到正常后面）；告警 / 预警永远赢过离线
+const projRank = (p) => (p.state === 'alarm' || p.state === 'warning' ? stateRank(p.state) : p.online === false ? STATES.offline.rank : 0)
 const byProjectPriority = (a, b) =>
-  stateRank(b.state) - stateRank(a.state) || (b.alarms?.length || 0) - (a.alarms?.length || 0) || String(b.created).localeCompare(String(a.created))
+  projRank(b) - projRank(a) || (b.alarms?.length || 0) - (a.alarms?.length || 0) || String(b.created).localeCompare(String(a.created))
 const byActiveFirst = (a, b) => hasActive(b) - hasActive(a) || byProjectPriority(a, b)
 // 小区摘要（分组弹窗排序用）
 const commSummary = (g) => ({ rank: stateRank(worstState(g.projects)), alarms: alarmCount(g.projects), n: g.projects.length })
+// 行点（8 px）：告警 / 预警按状态色（离线不另标，通讯故障告警本身就是离线）；离线 = 实心灰；在线状态未知 = 空心灰圈
+function projDot(p) {
+  if (p.state === 'alarm' || p.state === 'warning') return `<i style="background:${STATES[p.state].color}" title="${STATES[p.state].label}"></i>`
+  if (p.online === false) return '<i class="off" title="离线"></i>'
+  if (p.online == null) return '<i class="unk" title="在线状态未知"></i>'
+  return `<i style="background:${STATES.normal.color}" title="在线"></i>`
+}
+const offText = (projects) => {
+  const n = offlineCount(projects)
+  return n ? ` · <span class="off">${fmtNumber(n)} 户离线</span>` : ''
+}
 function popoverHtml() {
   const { c, all, toggled, more: moreSet } = pop
-  const row = (p, label) => `<li class="pj"><i style="background:${STATES[p.state]?.color || STATES.normal.color}" title="${STATES[p.state]?.label || ''}"></i>
+  const row = (p, label) => `<li class="pj${projRank(p) === STATES.offline.rank ? ' off' : ''}">${projDot(p)}
         <span class="n">${esc(showName(p.name) || label)}</span><span class="a">${p.area ? `${p.area}㎡` : ''}</span><a class="go" data-pid="${esc(p.id)}" role="button" tabindex="0" title="查看项目详情">详情 ›</a></li>${alarmRows(p, (p.alarms || []).some(isActiveAlarm) !== toggled.has(p.id), moreSet.has(p.id))}`
   let rows
   let grouped = false
@@ -229,7 +246,7 @@ function popoverHtml() {
         const rest = ps.length - shown.length
         const al = alarmCount(g.projects)
         return (
-          `<li class="grp"><span class="n">${esc(g.label)}</span><span class="a">${g.projects.length} 个项目${al ? ` · <em>${al} 告警</em>` : ''}</span></li>` +
+          `<li class="grp"><span class="n">${esc(g.label)}</span><span class="a">${g.projects.length} 个项目${al ? ` · <em>${al} 告警</em>` : ''}${offText(g.projects)}</span></li>` +
           shown.map((p) => row(p, g.label)).join('') +
           (rest > 0 ? `<li class="al al--more grp-more" data-act="gmore" data-g="${esc(g.key)}" role="button" tabindex="0">更多 ${rest} 个项目 ▾</li>` : '')
         )
@@ -243,7 +260,7 @@ function popoverHtml() {
   const more = !grouped && !all && total > POP_LIMIT ? `<button class="dm-pop__all" data-act="all">查看全部 ${total} 个项目</button>` : ''
   const alarms = alarmCount(c.projects)
   return `<div class="dm-pop">
-    <div class="dm-pop__h"><b>${esc(c.label)}</b><span>${esc(c.districtName)} · ${c.projects.length} 个项目${alarms ? ` · <em>${alarms} 告警</em>` : ''}</span>
+    <div class="dm-pop__h"><b>${esc(c.label)}</b><span>${esc(c.districtName)} · ${c.projects.length} 个项目${alarms ? ` · <em>${alarms} 告警</em>` : ''}${offText(c.projects)}</span>
       <button class="dm-pop__x" data-act="close" aria-label="关闭">×</button></div>
     <ul>${rows}</ul>${more}
     <i class="dm-pop__arrow"></i>
@@ -624,16 +641,36 @@ function groupContent(it, focusKey = null) {
     memberKeys: members.map((m) => m.key).sort().join('\n'),
   }
 }
-// 索引重建后（加载中新小区刚定位、并进了打开着的终态簇）：按新成员重绘分组弹窗，保留展开状态
-function refreshGroupPopover() {
-  if (!pop?.c?.groups || level !== 'terminal') return // 只在终态级（缩小后的簇不是同一个分组）
-  const t = pickRefreshTarget(indexes, lastItems, pop.c.memberKeys.split('\n'), pop.c.focusKey)
-  if (!t) return
-  // 聚焦的小区被拆出来成了单小区时也用（一组的）分组弹窗：保留 groups / focusKey，之后再重建还能跟着它并进新簇
-  const c = groupContent(t.item, pop.c.focusKey)
-  if (c.memberKeys === pop.c.memberKeys) return
+// 数据刷新（60 s 告警 / 在线轮询、渐进定位）后重绘打开着的弹窗：只换内容（告警 / 在线点、新并入的成员），
+// 保留展开状态与滚动位置；不重新 open、不做避让平移——轮询绝不移动视野
+function refreshPopover() {
+  if (!pop) return
+  let c
+  if (pop.c.groups) {
+    if (level !== 'terminal') return // 只在终态级（缩小后的簇不是同一个分组）
+    const t = pickRefreshTarget(indexes, lastItems, pop.c.memberKeys.split('\n'), pop.c.focusKey)
+    if (!t) return
+    // 聚焦的小区被拆出来成了单小区时也用（一组的）分组弹窗：保留 groups / focusKey，之后再重建还能跟着它并进新簇
+    c = groupContent(t.item, pop.c.focusKey)
+  } else {
+    c = indexes.byKey.get(pop.c.key)
+    if (!c) return
+  }
   pop.c = c
-  openPopover(c, true)
+  updatePopover()
+}
+function updatePopover() {
+  const ul = el.value?.querySelector('.dm-pop ul')
+  const top = ul ? ul.scrollTop : 0
+  clearPopMq()
+  info.setContent(popoverHtml())
+  const at = info.getPosition && info.getPosition()
+  if (at && (at.lng !== pop.c.lnglat[0] || at.lat !== pop.c.lnglat[1])) info.setPosition(pop.c.lnglat)
+  nextTick(() => {
+    const u = el.value?.querySelector('.dm-pop ul')
+    if (u) u.scrollTop = top
+    el.value?.querySelectorAll('.dm-pop .mqx').forEach((n) => popMq.push(mountMarquee(n)))
+  })
 }
 
 // 上一帧的视图（决定动画方向）：{ level, zq, items }
@@ -850,7 +887,17 @@ onMounted(() => {
     center: props.center || undefined,
     mapStyle: MAP_STYLE,
   })
-  if (import.meta.env.DEV) window.__dmMap = map // 开发环境：验证脚本读取缩放级别
+  if (import.meta.env.DEV) {
+    window.__dmMap = map // 开发环境：验证脚本读取缩放级别
+    // 视野变更记录（查「无操作时地图自己缩放」）：每次改中心 / 缩放的调用与调用栈，最多 300 条
+    const log = (window.__dmViewLog = [])
+    const push = (e) => log.length < 300 && log.push({ t: Date.now(), z: +map.getZoom().toFixed(2), ...e, stack: new Error().stack.split('\n').slice(2, 7).join(' | ') })
+    for (const fn of ['setZoom', 'setZoomAndCenter', 'setCenter', 'panBy', 'panTo', 'setBounds', 'setFitView', 'zoomIn', 'zoomOut']) {
+      const orig = map[fn].bind(map)
+      map[fn] = (...args) => (push({ fn, args: JSON.stringify(args.slice(0, 2)).slice(0, 80) }), orig(...args))
+    }
+    map.on('zoomend', () => push({ ev: 'zoomend' }))
+  }
   el.value.addEventListener('click', onPopClick)
   el.value.addEventListener('pointerdown', onPopDown, true)
   el.value.addEventListener('wheel', onPopWheel, { capture: true, passive: false })
@@ -892,9 +939,10 @@ watch(
     clearTimeout(idxTimer)
     idxTimer = setTimeout(() => {
       if (!map) return
+      // 只重建索引 + 按 id 增量更新标记内容；不碰缩放 / 中心（docs/fable-offline.md §7）
       rebuildIndexes()
       render(false)
-      refreshGroupPopover()
+      refreshPopover()
     }, 300)
   }
 )
@@ -1148,6 +1196,20 @@ onBeforeUnmount(() => {
   top: auto;
   bottom: calc(100% + calc(5px * var(--k, 1)));
 }
+/* 全部离线：灯灭了——灰边 70%、灰底 10%、去掉内发光；整体不用 opacity（点按区域 / 叠环保持清楚） */
+.dm-mk--offline {
+  border-color: color-mix(in srgb, var(--dm-offline) 70%, transparent);
+  background: color-mix(in srgb, var(--dm-offline) var(--dm-offline-fill, 10%), rgba(4, 11, 24, 0.55));
+  box-shadow: none;
+}
+.dm-hit .dm-mk--offline .dm-mk__n {
+  color: #c5d2e0;
+}
+.dm-hit .dm-mk.dm-mk--offline .dm-mk__label,
+.dm-hit .dm-mk.dm-mk--offline.dm-mk--named .dm-mk__label,
+.dm-hit .dm-mk.dm-mk--offline .dm-mk__label--side {
+  color: var(--dm-offline-name, #9fb0c6);
+}
 .dm-mk--dot {
   border-width: calc(2px * var(--k, 1));
   background: color-mix(in srgb, var(--c) 45%, rgba(4, 11, 24, 0.7));
@@ -1324,6 +1386,19 @@ onBeforeUnmount(() => {
   width: calc(8px * var(--k, 1));
   height: calc(8px * var(--k, 1));
   border-radius: 50%;
+}
+.dm-pop li i.off {
+  background: var(--dm-offline);
+}
+.dm-pop li i.unk {
+  box-sizing: border-box;
+  border: 1.5px solid var(--dm-offline);
+}
+.dm-pop li.pj.off .n {
+  color: #b7d3f0;
+}
+.dm-pop .off {
+  color: var(--dm-offline);
 }
 .dm-pop li .n {
   overflow: hidden;

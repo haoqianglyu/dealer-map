@@ -26,9 +26,16 @@
   --dm-ok: #00e2a1;
   --dm-warn: #ffc722;
   --dm-alarm: #ff4d4f;
+  --dm-offline: #8a9bb3; /* 离线灰：与图例同色；浅色主题 #6b7a90 */
   --dm-heat-halo: #ffb857;
   --dm-font: 'PingFang SC', 'Microsoft YaHei', 'Noto Sans SC', 'Helvetica Neue', Arial, sans-serif;
   --dm-num: 'DM Num', 'DIN Alternate', 'Bahnschrift', var(--dm-font);
+}
+/* 浅色主题（尚未启用）：离线灰降饱和 / 对比度，低于「正常」色，且避开高德浅色路网灰 */
+:root[data-theme='light'] {
+  --dm-offline: #6b7a90;
+  --dm-offline-fill: 8%;
+  --dm-offline-name: #5b6b80;
 }
 
 * {

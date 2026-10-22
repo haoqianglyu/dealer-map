@@ -98,8 +98,8 @@
       <!-- 图例：随模式切换 -->
       <div class="legend">
         <template v-if="mode === 'markers'">
-          <span v-for="(st, k) in STATES" :key="k"><i class="dot" :style="{ '--c': st.color }" />{{ st.label }}</span>
-          <span class="help" :class="{ open: helpOpen }" tabindex="0" role="button" aria-label="说明" @click="helpOpen = !helpOpen" @blur="helpOpen = false" @keydown.enter.prevent="helpOpen = !helpOpen" @keydown.esc="helpOpen = false">?<em>区县圈 = 该区全部项目；放大后显示已确认位置的小区，相邻的合并成一个圈（双环 = 多个小区合并，点击继续放大）；14 级以上显示小区名</em></span>
+          <span v-for="(st, k) in STATES" :key="k"><i class="dot" :style="{ '--c': st.color }" />{{ k === 'offline' ? '全部离线' : st.label }}</span>
+          <span class="help" :class="{ open: helpOpen }" tabindex="0" role="button" aria-label="说明" @click="helpOpen = !helpOpen" @blur="helpOpen = false" @keydown.enter.prevent="helpOpen = !helpOpen" @keydown.esc="helpOpen = false">?<em>区县圈 = 该区全部项目；放大后显示已确认位置的小区，相邻的合并成一个圈（双环 = 多个小区合并，点击继续放大）；14 级以上显示小区名；灰色 = 圈内项目全部离线（部分离线见弹窗）</em></span>
         </template>
         <template v-else>
           <span class="heat-title">{{ heatMetric === 'alarms' ? '亮度 = 一级告警数（10 天）' : '亮度 = 小区内项目数' }}</span>
@@ -110,7 +110,7 @@
       <!-- 地图右下状态行 -->
       <div class="status">
         <span v-if="AMapRef && geoPending > 0" class="ring" />
-        <template v-if="allProjects.length">已定位 {{ fmtNumber(locatedCount) }} / {{ fmtNumber(groups.length) }} 小区 · 已加载 {{ fmtNumber(allProjects.length) }} 个项目<template v-if="totalVisible > allProjects.length"> / {{ fmtNumber(totalVisible) }}</template> · 告警 {{ alarmUpdated || '—' }} 更新</template>
+        <template v-if="allProjects.length">已定位 {{ fmtNumber(locatedCount) }} / {{ fmtNumber(groups.length) }} 小区<template v-if="onlineLine"> · {{ onlineLine }}</template> · 告警 {{ alarmUpdated || '—' }} 更新</template>
         <template v-else>{{ loading ? '正在加载项目…' : '' }}</template>
       </div>
 
@@ -207,7 +207,7 @@ import { hasAmapKey, loadAmap } from '@/geo/amap'
 import { loadOverrides, loadSeed, lookupLocal, createGeocodeQueue, jitter } from '@/geo/geocoder'
 import { regionInfo } from '@/utils/region'
 import { STATES, applyStates, alarmStates, isActiveAlarm, alarmTag } from '@/geo/states'
-import { applyOnline, groupsOnlineStats } from '@/geo/online'
+import { applyOnline, groupsOnlineStats, createOnlineTracker, sane } from '@/geo/online'
 import { fmtNumber, fmtArea } from '@/utils/format'
 import { tooltipStyle, categoryAxis, valueAxis } from '@/utils/chartTheme'
 import { vMarquee, alarmText } from '@/directives/marquee'
@@ -283,19 +283,24 @@ async function loadAlarms() {
     alarmsLoaded.value = true
   }
 }
-// ---------- 在线状态（与告警同节奏 60 秒刷新）：null = 未知（接口失败 / 返回空）——此时不把任何项目判为离线 ----------
-const onlineSet = shallowRef(null)
-const onlineUpdated = ref('')
+// ---------- 在线状态（与告警同节奏 60 秒刷新），docs/fable-offline.md ----------
+// 失败 / 返回空：沿用上一次结果最多 5 分钟（状态行提示「未更新」），之后 = 未知（不判任何项目离线，永不全灰）。
+// 标记变灰要连续 2 次成功轮询都离线（geo/online.js）；弹窗行点即时变。
+const onlineTracker = createOnlineTracker()
+const onlineRaw = shallowRef(null)
+const onlineLoaded = ref(false)
 async function loadOnline() {
+  let set = null
   try {
-    onlineSet.value = await listOnlineProjectIds()
-    onlineUpdated.value = onlineSet.value ? hhmm() : ''
+    set = await listOnlineProjectIds()
   } catch (e) {
     console.warn('在线状态获取失败', e?.response?.status || e?.message)
-    onlineSet.value = null
-    onlineUpdated.value = ''
   }
+  onlineRaw.value = onlineTracker.update(set)
+  onlineLoaded.value = true
 }
+// 与本账号项目一个都对不上 → 当未知
+const onlineView = computed(() => sane(onlineRaw.value, allProjects.value))
 function refreshStatus() {
   loadAlarms()
   loadOnline()
@@ -377,7 +382,7 @@ const distributorOptions = computed(() => {
 
 const projects = computed(() => {
   const list = distributorFilter.value ? cityProjects.value.filter((p) => p.distributorId === distributorFilter.value) : cityProjects.value
-  return applyOnline(applyStates(list, alarmStateMap.value), onlineSet.value)
+  return applyOnline(applyStates(list, alarmStateMap.value), onlineView.value)
 })
 
 // ---------- 按小区分组 ----------
@@ -491,10 +496,19 @@ const projectGroup = computed(() => {
   return m
 })
 // 在线汇总（当前范围内的小区）：null = 未知
-const onlineStats = computed(() => groupsOnlineStats(groups.value, onlineSet.value))
+const onlineStats = computed(() => groupsOnlineStats(groups.value, onlineView.value))
+// 状态行：在线 x / y（当前范围）；失败沿用中 → 加「在线状态 hh:mm 未更新」；未知 → 「在线状态未知」
+const onlineLine = computed(() => {
+  const v = onlineView.value
+  if (!v) return onlineLoaded.value ? '在线状态未知' : ''
+  const s = onlineStats.value
+  const base = `在线 ${fmtNumber(s.online)} / ${fmtNumber(s.total)}`
+  return v.stale ? `${base} · 在线状态 ${hhmm(new Date(v.updatedAt))} 未更新` : base
+})
 if (import.meta.env.DEV) {
   // 开发环境验证：只返回计数，不含 id / 名称
-  window.__dmOnline = () => ({ ids: onlineSet.value?.size ?? null, projects: allProjects.value.length, matched: onlineSet.value ? allProjects.value.filter((p) => onlineSet.value.has(String(p.id))).length : null, scope: onlineStats.value })
+  window.__dmPoll = refreshStatus // 立即轮询一次（验证轮询不移动视野）
+  window.__dmOnline = () => ({ ids: onlineView.value?.cur.size ?? null, stale: onlineView.value?.stale ?? null, projects: allProjects.value.length, scope: onlineStats.value, confirmedOffline: projects.value.filter((p) => p.offline).length })
 }
 const alarmJoined = computed(() => alarms.value.filter((a) => projectGroup.value.has(a.projectId)))
 const activeAlarmCount = computed(() => alarmJoined.value.filter(isActiveAlarm).length)
