@@ -5,7 +5,14 @@
 export const PALETTES = {
   gold: { halo: [255, 184, 87], core: [255, 222, 158], filament: [255, 245, 219] }, // #FFB857 #FFDE9E #FFF5DB
   red: { halo: [255, 106, 61], core: [255, 176, 112], filament: [255, 240, 224] }, // #FF6A3D #FFB070 #FFF0E0
+  // 亮色「墨染」（docs/fable-light-theme.md §5）：canvas 元素 multiply 到底图上，层内也 multiply（重叠处积深）
+  ochre: { halo: [196, 138, 46], core: [168, 106, 24], filament: [107, 61, 8] }, // #C48A2E #A86A18 #6B3D08
+  crimson: { halo: [198, 40, 60], core: [160, 22, 44], filament: [94, 10, 28] }, // #C6283C #A0162C #5E0A1C
 }
+// 每种调色的混合方式与三层 α 系数（深色 gold / red 的值 = 原值，零变化）
+const INK = { blend: 'multiply', halo: 0.4, core: 0.55, filament: null, filamentFixed: 0.92, dim: false }
+const GLOW = { blend: 'lighter', halo: 0.55, core: 0.62, filament: 1, filamentFixed: null, dim: true }
+const MODE = { gold: GLOW, red: GLOW, ochre: INK, crimson: INK }
 
 // 5 档：count 下限 → 峰值 α、外晕半径（米）、远景最小外晕像素；大小主要靠外晕增长，芯与灯丝保持很小
 const TIERS = [
@@ -33,10 +40,28 @@ export function createWarmLights(AMap, map) {
   const canvas = document.createElement('canvas')
   canvas.style.pointerEvents = 'none' // 只是画光，不能挡住标记的点击
   const layer = new AMap.CustomLayer(canvas, { zIndex: 110, zooms: [3, 20], alwaysRender: true })
+  // 告警数字：亮色时光层 multiply（白描边会消失），数字画在第二张不混合的 canvas 上
+  const labelCanvas = document.createElement('canvas')
+  labelCanvas.style.pointerEvents = 'none'
+  const labelLayer = new AMap.CustomLayer(labelCanvas, { zIndex: 111, zooms: [3, 20], alwaysRender: true })
   let lights = []
+  let paletteName = 'gold'
   let palette = PALETTES.gold
   let visible = false
   let raf = 0
+
+  const fit = (cv, w, h, dpr) => {
+    if (cv.width !== w * dpr || cv.height !== h * dpr) {
+      cv.width = w * dpr
+      cv.height = h * dpr
+      cv.style.width = `${w}px`
+      cv.style.height = `${h}px`
+    }
+    const c = cv.getContext('2d')
+    c.setTransform(dpr, 0, 0, dpr, 0, 0)
+    c.clearRect(0, 0, w, h)
+    return c
+  }
 
   function draw() {
     raf = 0
@@ -44,19 +69,20 @@ export function createWarmLights(AMap, map) {
     const dpr = window.devicePixelRatio || 1
     const w = size.width
     const h = size.height
-    if (canvas.width !== w * dpr || canvas.height !== h * dpr) {
-      canvas.width = w * dpr
-      canvas.height = h * dpr
-      canvas.style.width = `${w}px`
-      canvas.style.height = `${h}px`
+    const mode = MODE[paletteName] || GLOW
+    const ink = mode.blend === 'multiply'
+    const ctx = fit(canvas, w, h, dpr)
+    const lctx = ink ? fit(labelCanvas, w, h, dpr) : null
+    if (!ink && labelCanvas.width) {
+      labelCanvas.width = 0 // 深色：数字仍画在光层上（原样），第二张清空
+      labelCanvas.height = 0
     }
-    const ctx = canvas.getContext('2d')
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
-    ctx.clearRect(0, 0, w, h)
     if (!visible) return
-    // 轻微压暗底图（不能太重，否则底图地名/道路看不清）
-    ctx.fillStyle = 'rgba(14, 14, 16, 0.28)'
-    ctx.fillRect(0, 0, w, h)
+    // 轻微压暗底图（不能太重，否则底图地名/道路看不清）；亮色 multiply 下不画
+    if (mode.dim) {
+      ctx.fillStyle = 'rgba(14, 14, 16, 0.28)'
+      ctx.fillRect(0, 0, w, h)
+    }
     if (!lights.length) return
     const res = map.getResolution() // 米/像素（视野中心）
     // 远景（zoom < 12）按 2^((zoom−12)·0.4) 缩小最小像素，城市级视图里各小区灯光才分得开
@@ -76,7 +102,7 @@ export function createWarmLights(AMap, map) {
       for (let dx = -1; dx <= 1; dx++) for (let dy = -1; dy <= 1; dy++) n += grid.get(`${cx + dx},${cy + dy}`) || 0
       return n
     }
-    ctx.globalCompositeOperation = 'lighter'
+    ctx.globalCompositeOperation = mode.blend
     const now = performance.now()
     const breath = 0.6 + 0.4 * (0.5 + 0.5 * Math.sin((now / 2000) * Math.PI * 2)) // 2 秒一个周期
     let pulsing = false
@@ -90,43 +116,53 @@ export function createWarmLights(AMap, map) {
       if (px.x < -R || px.y < -R || px.x > w + R || px.y > h + R) continue
       // 外晕：宽、很柔、低饱和；芯：小；灯丝：极小的近白亮点（各档几乎同大）
       if (l.pulse) pulsing = true
-      glow(ctx, px.x, px.y, R, halo, t.peak * 0.55 * crowd * (l.pulse ? breath : 1))
-      glow(ctx, px.x, px.y, Math.min(R * 0.22, 6 + t.idx * 1.2), core, t.peak * 0.62)
-      glow(ctx, px.x, px.y, 2.6 + t.idx * 0.45, filament, t.peak)
+      glow(ctx, px.x, px.y, R, halo, t.peak * mode.halo * crowd * (l.pulse ? breath : 1))
+      glow(ctx, px.x, px.y, Math.min(R * 0.22, 6 + t.idx * 1.2), core, t.peak * mode.core)
+      glow(ctx, px.x, px.y, 2.6 + t.idx * 0.45, filament, mode.filamentFixed ?? t.peak * mode.filament)
     }
     ctx.globalCompositeOperation = 'source-over'
-    // 告警热力：灯心标注进行中条数
-    ctx.font = '600 12px "DM Num", "PingFang SC", sans-serif'
-    ctx.textAlign = 'center'
-    ctx.textBaseline = 'middle'
+    // 告警热力：灯心标注进行中条数（亮色：第二张 canvas，深墨红字 + 白描边）
+    const tctx = lctx || ctx
+    tctx.font = '600 12px "DM Num", "PingFang SC", sans-serif'
+    tctx.textAlign = 'center'
+    tctx.textBaseline = 'middle'
     for (const { l, px } of pts) {
       if (!l.label || px.x < 0 || px.y < 0 || px.x > w || px.y > h) continue
-      ctx.lineWidth = 3
-      ctx.strokeStyle = 'rgba(40, 10, 4, 0.75)'
-      ctx.strokeText(String(l.label), px.x, px.y - 14)
-      ctx.fillStyle = '#FFF0E0'
-      ctx.fillText(String(l.label), px.x, px.y - 14)
+      tctx.lineWidth = 3
+      tctx.strokeStyle = ink ? 'rgba(255, 255, 255, 0.92)' : 'rgba(40, 10, 4, 0.75)'
+      tctx.strokeText(String(l.label), px.x, px.y - 14)
+      tctx.fillStyle = ink ? '#5a0a18' : '#FFF0E0'
+      tctx.fillText(String(l.label), px.x, px.y - 14)
     }
     if (pulsing) schedule() // 有呼吸灯时持续逐帧重绘
   }
+  const syncLabel = () => (visible && MODE[paletteName].blend === 'multiply' ? labelLayer.show() : labelLayer.hide())
   const schedule = () => {
     if (!raf) raf = requestAnimationFrame(draw)
   }
   layer.render = schedule
+  labelLayer.render = schedule
   map.add(layer)
+  map.add(labelLayer)
+  labelLayer.hide()
   map.on('mapmove', schedule)
   map.on('zoomchange', schedule)
   map.on('resize', schedule)
 
   return {
-    set(next, paletteName = 'gold') {
+    set(next, name = 'gold') {
       lights = next
-      palette = PALETTES[paletteName] || PALETTES.gold
+      paletteName = PALETTES[name] ? name : 'gold'
+      palette = PALETTES[paletteName]
+      // 元素层混合：亮色 multiply 到底图（canvas 内部的 composite 管不到瓦片）；深色 normal（原样）
+      canvas.style.mixBlendMode = MODE[paletteName].blend === 'multiply' ? 'multiply' : ''
+      syncLabel()
       schedule()
     },
     show(v) {
       visible = v
       v ? layer.show() : layer.hide() // 点位模式下整层隐藏
+      syncLabel()
       schedule()
     },
     destroy() {
@@ -135,6 +171,7 @@ export function createWarmLights(AMap, map) {
       map.off('zoomchange', schedule)
       map.off('resize', schedule)
       map.remove(layer)
+      map.remove(labelLayer)
     },
   }
 }

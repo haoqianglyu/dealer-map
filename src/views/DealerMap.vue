@@ -106,8 +106,8 @@
           <span class="help" :class="{ open: helpOpen }" tabindex="0" role="button" aria-label="说明" @click="helpOpen = !helpOpen" @blur="helpOpen = false" @keydown.enter.prevent="helpOpen = !helpOpen" @keydown.esc="helpOpen = false">?<em>区县圈 = 该区全部项目；放大后显示已确认位置的小区，相邻的合并成一个圈（双环 = 多个小区合并，点击继续放大）；14 级以上显示小区名；灰色 = 圈内项目全部离线（部分离线见弹窗）</em></span>
         </template>
         <template v-else>
-          <span class="heat-title">{{ heatMetric === 'alarms' ? '亮度 = 一级告警数（10 天）' : '亮度 = 小区内项目数' }}</span>
-          <span v-for="t in HEAT_TIERS" :key="t.label" class="sw"><i :style="{ background: t.color }" />{{ t.label }}</span>
+          <span class="heat-title">{{ (theme === 'light' ? '深浅' : '亮度') + (heatMetric === 'alarms' ? ' = 一级告警数（10 天）' : ' = 小区内项目数') }}</span>
+          <span v-for="t in heatTiers" :key="t.label" class="sw"><i :style="{ background: t.color }" />{{ t.label }}</span>
         </template>
       </div>
 
@@ -245,6 +245,15 @@ const HEAT_TIERS = [
   { label: '10–19', color: 'rgba(255,222,158,0.9)' },
   { label: '20+', color: '#fff5db' },
 ]
+// 亮色「墨染」：赭石由浅到深（§2.3）；告警口径同一套
+const HEAT_TIERS_LIGHT = [
+  { label: '1', color: '#ecdcc2' },
+  { label: '2–4', color: '#ddbb86' },
+  { label: '5–9', color: '#c99a52' },
+  { label: '10–19', color: '#a86a18' },
+  { label: '20+', color: '#7a480a' },
+]
+const heatTiers = computed(() => (theme.value === 'light' ? HEAT_TIERS_LIGHT : HEAT_TIERS))
 
 const router = useRouter()
 const route = useRoute()
@@ -957,6 +966,9 @@ onBeforeUnmount(() => {
     .help em {
       background: rgba(255, 255, 255, 0.98);
       box-shadow: var(--dm-shadow-pop);
+    }
+    .sw i {
+      box-shadow: inset 0 0 0 1px rgba(16, 33, 58, 0.12); /* 1px 边，内描不改尺寸 */
     }
   }
   .status {

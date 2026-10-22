@@ -848,7 +848,8 @@ function renderHeat() {
       return { lnglat: c.lnglat, count: c.projects.length, pulse: false }
     })
     .filter((l) => l.count > 0)
-  heat.set(lights, props.heatMetric === 'alarms' ? 'red' : 'gold')
+  const light = theme.value === 'light'
+  heat.set(lights, props.heatMetric === 'alarms' ? (light ? 'crimson' : 'red') : light ? 'ochre' : 'gold')
   heat.show(on)
 }
 
