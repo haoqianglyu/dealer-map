@@ -79,7 +79,6 @@
             <b>{{ clock.time }}</b><small>{{ clock.date }}</small>
           </div>
           <div class="user" :title="`${userName}（${scopeHint}）`">
-            <i class="avatar">{{ (userName || '·').slice(0, 1) }}</i>
             <span class="user__name">{{ userName || '…' }}</span>
           </div>
           <button class="logout" title="退出登录" aria-label="退出登录" @click="logout">
@@ -982,18 +981,6 @@ onBeforeUnmount(() => {
   align-items: center;
   gap: 8px;
   max-width: 200px;
-  .avatar {
-    flex: none;
-    width: 24px;
-    height: 24px;
-    display: grid;
-    place-items: center;
-    font-size: 12px;
-    font-style: normal;
-    color: #04121f;
-    background: linear-gradient(135deg, #8fe6ff, #35d4ff);
-    border-radius: 50%;
-  }
   &__name {
     overflow: hidden;
     white-space: nowrap;
