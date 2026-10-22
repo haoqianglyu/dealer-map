@@ -41,7 +41,8 @@ export function refreshSession({ ifToken } = {}) {
 // tone：'warn'（会话过期等，警示色）| 'info'（主动退出，灰字）
 export function toLogin(reason = '', tone = 'warn') {
   session.clear()
-  if (reason) sessionStorage.setItem('dm_login_reason', JSON.stringify({ text: reason, tone }))
+  // 警示 = 纯文本（与旧版本相同）；其它语气存 JSON { text, tone }
+  if (reason) sessionStorage.setItem('dm_login_reason', tone === 'warn' ? reason : JSON.stringify({ text: reason, tone }))
   if (!location.hash.startsWith('#/login')) location.hash = '#/login'
   location.reload()
 }
