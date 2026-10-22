@@ -97,3 +97,6 @@ Codex（gpt-6.1-sol high）评审线上 a63437e..HEAD（全部聚合改动），
 - 共享缓存：按 NORMALIZE_VERSION 4 + 当前生普项目（702）离线重算，删 63 个旧规则 key（289 → 226，rev 293 → 294，版本锁写入）；备份 `geo/backup/shared-2026-10-22.json`。
 - FC 户号校验改为「数字 / 中文数字 / 字母 + 栋幢座号楼单元室层」或 #，单字「元」不再误判；已部署，「320213|无锡市梁溪区天元世家」经 FC 写入（rev 295）。
 - 聚合发布暂缓的 5（终态分组弹窗成员不刷新）与 6（未定位告警只在前 100 行找）均已修。
+
+## Standing rule (owner, 2026-10-22)
+Every new UI element must support BOTH themes (dark default + light). Use theme tokens from docs/fable-light-theme.md — no hard-coded colours. Verify both themes in real Chrome before deploy.

@@ -5,7 +5,7 @@
 <script setup>
 import { ref, watch, onMounted, onBeforeUnmount, onActivated, nextTick } from 'vue'
 import { createWarmLights } from './warmLights'
-import { theme, mapStyleFor } from '@/composables/useTheme'
+import { theme, mapStyleFor, onThemeSwitch } from '@/composables/useTheme'
 import { showName } from '@/utils/showroom'
 import { mountMarquee, alarmText } from '@/directives/marquee'
 import CONTEXT_CITIES from '@/data/cities-context.json'
@@ -1014,8 +1014,42 @@ watch(
   }
 )
 // 主题切换：运行时换底图（不刷新、不动视野 / 弹窗）；换样式后高德会重置 features，重新下发
+// 换样式后的「瓦片就绪」：高德 setMapStyle 之后不再发 complete，实测是先拉样式（getMergedStyleData，~170 ms）再拉瓦片
+// （get_tile，~420 ms），之后下一帧画出。看到 get_tile 响应即算就绪；只拉到样式（瓦片走缓存）时再给 250 ms；总上限 700 ms。
+// 主题揭开动画（useTheme.switchTheme）等这个 Promise：等待期间画面停在旧主题上，揭开时不露出空白 / 半张瓦片。
+let styleReady = null
+function watchStyleTiles() {
+  if (typeof PerformanceObserver !== 'function') return null
+  return new Promise((resolve) => {
+    let po = null
+    let t = 0
+    const done = () => {
+      clearTimeout(t)
+      clearTimeout(cap)
+      po && po.disconnect()
+      resolve()
+    }
+    const cap = setTimeout(done, 700)
+    try {
+      po = new PerformanceObserver((list) => {
+        for (const e of list.getEntries()) {
+          if (/\/get_tile\b/.test(e.name)) return done()
+          if (/getMergedStyleData/.test(e.name)) {
+            clearTimeout(t)
+            t = setTimeout(done, 250)
+          }
+        }
+      })
+      po.observe({ type: 'resource' })
+    } catch {
+      done()
+    }
+  })
+}
+const offThemeSwitch = onThemeSwitch(() => styleReady)
 watch(theme, () => {
   if (!map) return
+  styleReady = watchStyleTiles()
   map.setMapStyle(MAP_STYLE())
   featuresNow = ''
   applyFeatures()
@@ -1074,6 +1108,7 @@ onActivated(() =>
 )
 
 onBeforeUnmount(() => {
+  offThemeSwitch()
   cancelAnimationFrame(panRaf)
   clearTimeout(idxTimer)
   if (map) {
