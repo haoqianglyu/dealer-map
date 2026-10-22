@@ -32,7 +32,7 @@ const emit = defineEmits(['open-project', 'ready'])
 
 const ZOOM_SPLIT = 12 // < 12 区县汇总，≥ 12 小区
 const ZOOM_NAMES = 14 // ≥ 14 小区标记下显示小区名
-const MAP_STYLE = 'amap://styles/dark' // darkblue 预设在 13–16 级不出路名；dark 有路名、注记为灰（不抢数据色）
+const MAP_STYLE = 'amap://styles/darkblue' // 老板要藏青底色（dark 是灰色）；darkblue 在 13–16 级路名较少，暂接受
 const el = ref(null)
 let map = null
 let heat = null
@@ -205,14 +205,19 @@ function fitBounds(bounds, pad) {
 }
 
 // 点击区县：缩放到该区所有小区的范围（至少到小区级别）
-function zoomTo(points) {
+// 只用区县中心附近的小区（个别小区按名称前缀在全市范围定位、或坐标离群，会把视野拉到很远）
+function zoomTo(points, center) {
+  if (center) {
+    const near = points.filter((p) => Math.abs(p[0] - center[0]) < 0.35 && Math.abs(p[1] - center[1]) < 0.3)
+    if (near.length) points = near
+  }
   if (!points?.length) return
   if (points.length === 1) {
     map.setZoomAndCenter(15, points[0], false, 600)
     return
   }
   fitBounds(boundsOf(points), padding(60))
-  if (map.getZoom() < ZOOM_SPLIT) map.setZoom(ZOOM_SPLIT)
+  if (map.getZoom() < ZOOM_SPLIT) map.setZoom(ZOOM_SPLIT, true)
 }
 // 视野中心向左让出侧栏
 function centerOn(c) {
@@ -282,7 +287,7 @@ function renderMarkers() {
         content: markerHtml({ count: d.projects.length, projects: d.projects, district: true, label: d.label }),
         zIndex: 120 + stateRank(worstState(d.projects)),
       })
-      m.on('click', () => zoomTo(d.points))
+      m.on('click', () => zoomTo(d.points, d.lnglat))
       return m
     })
   } else {

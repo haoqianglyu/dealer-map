@@ -198,6 +198,7 @@ import { listAlarms, me, getDistributor, pickProjectEndpoint, projectPage, listA
 import { toLogin, errorText } from '@/api/http'
 import { useTokenRefresh } from '@/composables/useTokenRefresh'
 import { toProject } from '@/geo/model'
+import { mergeProjects } from '@/api/merge'
 import { loadShared, postShared } from '@/geo/shared'
 import { hasAmapKey, loadAmap } from '@/geo/amap'
 import { loadOverrides, loadSeed, lookupLocal, createGeocodeQueue, jitter } from '@/geo/geocoder'
@@ -616,12 +617,14 @@ async function loadProjects() {
         onPage: (list, total) => {
           if (stale()) return
           totalVisible.value = parseInt(total, 10) || 0
-          const add = list.filter((p) => !seen.has(p.id) && seen.add(p.id)).map(toProject)
-          allProjects.value = allProjects.value.concat(add)
+          allProjects.value = mergeProjects(allProjects.value, list, seen, toProject)
           loading.value = false
         },
       })
-      if (!stale()) totalVisible.value = allProjects.value.length
+      if (!stale()) {
+        allProjects.value = mergeProjects([], allProjects.value, new Set()) // 收尾再按 id 去一次重
+        totalVisible.value = allProjects.value.length
+      }
       return
     } else if (endpoint) {
       const r = await projectPage(endpoint, { page: 1, limit: PAGE_SIZE, region: regionFilter.value })
@@ -632,7 +635,8 @@ async function loadProjects() {
       totalVisible.value = all.length
       raw = FETCH_ALL ? all : all.slice(0, PAGE_SIZE)
     }
-    allProjects.value = raw.map(toProject)
+    if (stale()) return
+    allProjects.value = mergeProjects([], raw, new Set(), toProject)
     distributorFilter.value = ''
   } catch (e) {
     loadError.value = `项目数据加载失败：${errorText(e)}`
