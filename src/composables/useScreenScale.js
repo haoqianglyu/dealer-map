@@ -55,3 +55,34 @@ export function useScreenScale({ minW = 0, minH = 0 } = {}) {
   })
   return { scale, style }
 }
+
+/**
+ * 详情页：与 niuniu 相同的拉伸适配 —— 1920×1080 画布按 x / y 各自缩放铺满视口，没有下限、不滚动、不留边。
+ * @returns {{ scale, style }} scale 取 x/y 中较大者（EChart 用来提高画布分辨率）
+ */
+export function useStretchScale() {
+  const vp = ref(viewport())
+  const sx = computed(() => vp.value.w / DESIGN_W)
+  const sy = computed(() => vp.value.h / DESIGN_H)
+  const scale = computed(() => Math.max(sx.value, sy.value))
+  const resize = () => {
+    vp.value = viewport()
+    uiScale.value = scale.value
+  }
+  onMounted(() => {
+    resize()
+    window.addEventListener('resize', resize)
+  })
+  onBeforeUnmount(() => window.removeEventListener('resize', resize))
+  const style = computed(() => ({
+    position: 'absolute',
+    left: '0',
+    top: '0',
+    width: `${DESIGN_W}px`,
+    height: `${DESIGN_H}px`,
+    transform: `scale(${sx.value}, ${sy.value})`,
+    transformOrigin: '0 0',
+    '--ui-scale': Math.min(sx.value, sy.value),
+  }))
+  return { scale, style }
+}

@@ -223,7 +223,7 @@ import { ref, reactive, computed, onMounted, onBeforeUnmount, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import SmallSelect from '@/components/SmallSelect.vue'
 import BoxLoading from '@/components/BoxLoading.vue'
-import { useScreenScale, DESIGN_H } from '@/composables/useScreenScale'
+import { useStretchScale } from '@/composables/useScreenScale'
 import BrandLogo from '@/components/BrandLogo.vue'
 import { session } from '@/api/session'
 import EChart from '@/components/EChart.vue'
@@ -236,7 +236,7 @@ import { tooltipStyle, categoryAxis, valueAxis } from '@/utils/chartTheme'
 import { isShowroom, showName } from '@/utils/showroom'
 
 defineOptions({ name: 'ProjectDetail' })
-const { style: screenStyle } = useScreenScale({ minW: 1440, minH: DESIGN_H }) // 高度不足 1080 设计稿时整页纵向滚动（不压扁卡片）
+const { style: screenStyle } = useStretchScale() // 与 niuniu 一致：1920×1080 画布按 x/y 拉伸铺满一屏，不滚动
 const clock = ref('')
 const WEEK = '日一二三四五六'
 function tickClock() {
@@ -523,6 +523,7 @@ function back() {
 }
 
 onMounted(async () => {
+  document.documentElement.classList.add('pd-noscroll') // 本页 html/body 不出滚动条
   try {
     project.value = await getProject(projectId)
     if (!project.value) throw new Error('未找到该项目或无权限')
@@ -557,17 +558,25 @@ onMounted(async () => {
   loadSensor()
 })
 onBeforeUnmount(() => {
+  document.documentElement.classList.remove('pd-noscroll')
   clearInterval(timer)
   clearInterval(clockTimer)
 })
 </script>
+
+<style>
+html.pd-noscroll,
+html.pd-noscroll body {
+  overflow: hidden;
+}
+</style>
 
 <style scoped lang="scss">
 /* 版式与 niuniu room-detail 一致（直角细边框面板、标题左上），颜色用 dealer-map 主题变量 */
 .pd-screen {
   position: fixed;
   inset: 0;
-  overflow: auto;
+  overflow: hidden;
   background: var(--dm-page-bg, #050d1d);
 }
 .pd {

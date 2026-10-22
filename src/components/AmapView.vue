@@ -252,10 +252,11 @@ function renderMarkers() {
   if (markers.length) requestAnimationFrame(ready)
 }
 
-// 底图要素按缩放分档：远景只留底色 + 道路（地名由我们画）；12–14 级加建筑；≥14 级才显示 POI 地名；热力模式任何级别都不显示 POI
+// 底图要素：道路与地名（'point' 承载区县/片区/道路/地名注记）在任何缩放、任何模式下都显示，否则看不出哪里是哪里；
+// 建筑只在小区级（≥ 区县分界）加上
 let featuresNow = ''
 function applyFeatures() {
-  const f = level === 'district' ? ['bg', 'road'] : level === 'named' && props.mode !== 'heat' ? ['bg', 'road', 'building', 'point'] : ['bg', 'road', 'building']
+  const f = level === 'district' ? ['bg', 'road', 'point'] : ['bg', 'road', 'building', 'point']
   if (f.join() === featuresNow) return
   featuresNow = f.join()
   map.setFeatures(f)
