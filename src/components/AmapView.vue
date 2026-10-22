@@ -370,7 +370,7 @@ function avoidUi() {
   if (r.right > box.right - a.right) dx = box.right - a.right - r.right - 12
   if (r.left + dx < box.left + a.left) dx = box.left + a.left - r.left + 12
   // 顶边至少 108 px（顶栏渐变 96 px + 12 px 间隙；缩放 < 1 时 a.top 会小于 96，弹窗会贴到时钟）
-  const top = Math.max(a.top, 96) + 12
+  const top = Math.max(a.top, 96, a.popTop || 0) + 12
   if (r.top < box.top + top) dy = box.top + top - r.top
   else if (r.bottom > box.bottom - a.bottom) dy = box.bottom - a.bottom - r.bottom - 12
   if (Math.abs(dx) >= 1 || Math.abs(dy) >= 1) quickPan(dx, dy)

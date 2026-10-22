@@ -165,11 +165,11 @@ export function useTour(o) {
   async function stepHeat(my, p) {
     step.value = 'heat'
     setRow(null)
+    setChip(CHIP.heatProjects)
     await camera((ms) => map()?.flyCity(ms))
     if (!alive(my)) return
     setMode('heat')
     if (o.getMetric() !== 'projects') o.setMetric('projects')
-    setChip(CHIP.heatProjects)
     await sleep(DWELL.heat, my)
     if (!alive(my)) return
     if (p.story === 'alarm') {
@@ -306,6 +306,8 @@ export function useTour(o) {
     const t = now()
     if (a.key && shownAt.has(a.key) && t - shownAt.get(a.key) < THROTTLE_MS) return true
     if (interrupting || held) {
+      const i = queue.findIndex((x) => x.key && x.key === a.key)
+      if (i >= 0) queue.splice(i, 1) // 同一小区排队中：只留最新那条
       queue.push(a)
       if (queue.length > QUEUE_MAX) queue.splice(0, queue.length - QUEUE_MAX) // 溢出只留最新
       return true
@@ -325,7 +327,11 @@ export function useTour(o) {
   async function runInterrupt(my, a) {
     step.value = 'interrupt'
     map()?.closePop({ onlyIf: 'tour' })
-    setMode('markers')
+    if (o.getMode() !== 'markers') {
+      setMode('markers')
+      await new Promise((r) => setT(r, 0)) // 等模式传到地图组件（热力下 flyCommunity 不开弹窗）
+      if (!alive(my)) return
+    }
     setChip(a.chip, true)
     setRow({ district: a.district || null, alarmId: a.alarmId })
     o.showAlarm?.(a.alarmId, { flash: true })
@@ -334,7 +340,8 @@ export function useTour(o) {
     await sleep(DWELL.interrupt, my)
     if (!alive(my)) return
     map()?.closePop({ onlyIf: 'tour' })
-    const next = queue.shift()
+    let next = queue.shift()
+    while (next && next.key && shownAt.has(next.key) && now() - shownAt.get(next.key) < THROTTLE_MS) next = queue.shift() // 排队期间已插播过的小区：节流
     if (next) {
       interrupting = false
       if (next.key) shownAt.set(next.key, now())

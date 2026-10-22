@@ -278,7 +278,8 @@ const SIDE_W = 380 // 侧栏宽（设计稿像素）
 // 地图上被界面占用的区域（屏幕像素）：弹窗/飞行/适配视野时避开
 const avoid = computed(() => {
   const s = scale.value
-  return { top: Math.round(96 * s), right: Math.round((SIDE_W + 16 + 24) * s), bottom: Math.round(34 + 60 * s), left: Math.round(24 * s) }
+  // popTop：巡览胶囊（108–148 设计像素）显示时弹窗顶边再让到它下面（只影响弹窗避让，不影响视野适配）
+  return { top: Math.round(96 * s), right: Math.round((SIDE_W + 16 + 24) * s), bottom: Math.round(34 + 60 * s), left: Math.round(24 * s), popTop: tour.chip.show ? Math.round(148 * s) : 0 }
 })
 const HEAT_TIERS = [
   { label: '1', color: 'rgba(255,184,87,0.35)' },
@@ -788,7 +789,9 @@ if (tourCfg.now) {
   const t0 = performance.now()
   const tryNow = () => {
     tourNowTimer = 0
-    if (disposed || tour.state.value !== 'idle' || tour.start()) return
+    // 项目还在翻页：等加载完（最多 20 s），否则第一轮的胶囊数字是半截的
+    const partial = loading.value || totalVisible.value > allProjects.value.length
+    if (disposed || tour.state.value !== 'idle' || ((!partial || performance.now() - t0 > 20000) && tour.start())) return
     if (performance.now() - t0 < 60000) tourNowTimer = setTimeout(tryNow, 250)
   }
   tourNowTimer = setTimeout(tryNow, 250)
