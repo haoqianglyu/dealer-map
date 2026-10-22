@@ -1,6 +1,7 @@
 // 只使用平台的只读接口（登录 / 续期 / 查询）。不调用任何新增、修改、删除接口。
 // 数据范围由后端按当前 token 的账号权限过滤——前端不硬编码任何经销商/区域条件。
 import http from './http'
+import { toOnlineSet } from '../geo/online.js'
 
 export const login = (mobile, password) =>
   http.post('/auth/login', { mobile, password }, { skipAuth: true }).then((r) => r.data)
@@ -121,6 +122,10 @@ export async function listAlarms({ level = '1', days = 10, limit = 100, concurre
   const seen = new Set()
   return out.filter((a) => (seen.has(a.id) ? false : (seen.add(a.id), true))).map(toAlarm)
 }
+
+// 在线项目（只读）：GET /ctrl-mode/online-project-id-list → { ids: [...] }（niuniu 同款）。
+// 返回 Set；结构不对 / 空列表 → null（= 未知，页面不据此把项目标成离线）
+export const listOnlineProjectIds = () => http.get('/ctrl-mode/online-project-id-list').then((r) => toOnlineSet(r.data))
 
 // ---------- 项目详情（二级界面，参照 niuniu room-detail；全部只读） ----------
 // GET /project/{id} → project_entity（/projects 的 project_ids 过滤不生效）

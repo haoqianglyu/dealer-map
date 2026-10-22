@@ -198,7 +198,7 @@ import { brandFor, defaultBrand } from '@/config/brand'
 import EChart from '@/components/EChart.vue'
 import AmapView from '@/components/AmapView.vue'
 import FallbackMap from '@/components/FallbackMap.vue'
-import { listAlarms, me, getDistributor, pickProjectEndpoint, projectPage, listAllProjects, listProjectsLegacy } from '@/api'
+import { listAlarms, listOnlineProjectIds, me, getDistributor, pickProjectEndpoint, projectPage, listAllProjects, listProjectsLegacy } from '@/api'
 import { toLogin, errorText } from '@/api/http'
 import { toProject, mergeDeveloperAliases } from '@/geo/model'
 import { mergeProjects } from '@/api/merge'
@@ -207,6 +207,7 @@ import { hasAmapKey, loadAmap } from '@/geo/amap'
 import { loadOverrides, loadSeed, lookupLocal, createGeocodeQueue, jitter } from '@/geo/geocoder'
 import { regionInfo } from '@/utils/region'
 import { STATES, applyStates, alarmStates, isActiveAlarm } from '@/geo/states'
+import { applyOnline, groupsOnlineStats } from '@/geo/online'
 import { fmtNumber, fmtArea } from '@/utils/format'
 import { tooltipStyle, categoryAxis, valueAxis } from '@/utils/chartTheme'
 import { vMarquee, alarmText } from '@/directives/marquee'
@@ -281,6 +282,23 @@ async function loadAlarms() {
   } finally {
     alarmsLoaded.value = true
   }
+}
+// ---------- 在线状态（与告警同节奏 60 秒刷新）：null = 未知（接口失败 / 返回空）——此时不把任何项目判为离线 ----------
+const onlineSet = shallowRef(null)
+const onlineUpdated = ref('')
+async function loadOnline() {
+  try {
+    onlineSet.value = await listOnlineProjectIds()
+    onlineUpdated.value = onlineSet.value ? hhmm() : ''
+  } catch (e) {
+    console.warn('在线状态获取失败', e?.response?.status || e?.message)
+    onlineSet.value = null
+    onlineUpdated.value = ''
+  }
+}
+function refreshStatus() {
+  loadAlarms()
+  loadOnline()
 }
 const timeMode = ref('year')
 const AMapRef = shallowRef(null)
@@ -359,7 +377,7 @@ const distributorOptions = computed(() => {
 
 const projects = computed(() => {
   const list = distributorFilter.value ? cityProjects.value.filter((p) => p.distributorId === distributorFilter.value) : cityProjects.value
-  return applyStates(list, alarmStateMap.value)
+  return applyOnline(applyStates(list, alarmStateMap.value), onlineSet.value)
 })
 
 // ---------- 按小区分组 ----------
@@ -472,6 +490,12 @@ const projectGroup = computed(() => {
   for (const g of groups.value) for (const p of g.projects) m.set(p.id, g)
   return m
 })
+// 在线汇总（当前范围内的小区）：null = 未知
+const onlineStats = computed(() => groupsOnlineStats(groups.value, onlineSet.value))
+if (import.meta.env.DEV) {
+  // 开发环境验证：只返回计数，不含 id / 名称
+  window.__dmOnline = () => ({ ids: onlineSet.value?.size ?? null, projects: allProjects.value.length, matched: onlineSet.value ? allProjects.value.filter((p) => onlineSet.value.has(String(p.id))).length : null, scope: onlineStats.value })
+}
 const alarmJoined = computed(() => alarms.value.filter((a) => projectGroup.value.has(a.projectId)))
 const activeAlarmCount = computed(() => alarmJoined.value.filter(isActiveAlarm).length)
 const FEED_LIMIT = 100
@@ -792,7 +816,7 @@ function logout() {
 
 function reloadAll() {
   loadProjects()
-  loadAlarms()
+  refreshStatus()
 }
 
 watch(regionFilter, async () => {
@@ -823,8 +847,8 @@ onMounted(async () => {
     profileLoaded.value = true
     loadError.value = `账号信息获取失败：${errorText(e)}`
   }
-  loadAlarms()
-  alarmTimer = setInterval(loadAlarms, 60000)
+  refreshStatus()
+  alarmTimer = setInterval(refreshStatus, 60000)
   const projP = loadProjects()
   const [ov, sd, sh] = await geoP
   overrides.value = ov

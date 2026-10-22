@@ -11,6 +11,7 @@ const API_ALLOW = [
   /^\/ctrl\/projects$/,
   /^\/project\/new-list$/,
   /^\/device-alarms$/,
+  /^\/ctrl-mode\/online-project-id-list$/, // 在线项目 id（只读 GET）
   // 项目详情（二级界面）只读接口
   /^\/project\/[0-9a-f]{24}$/,
   /^\/project-config\/[0-9a-f]{24}$/,
@@ -18,6 +19,9 @@ const API_ALLOW = [
   /^\/device-categories$/,
   /^\/device-models$/,
 ]
+
+// 只允许 GET 的接口
+const GET_ONLY = new Set(['/ctrl-mode/online-project-id-list'])
 
 const SECURITY_HEADERS = {
   'X-Robots-Tag': 'noindex, nofollow',
@@ -65,6 +69,7 @@ async function proxyApi(request, url) {
   }
   if (!API_ALLOW.some((re) => re.test(path))) return notFound()
   if (!['GET', 'POST'].includes(request.method)) return notFound()
+  if (GET_ONLY.has(path) && request.method !== 'GET') return notFound()
   const headers = new Headers()
   for (const h of ['authorization', 'content-type', 'accept']) {
     const v = request.headers.get(h)
