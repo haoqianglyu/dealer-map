@@ -198,8 +198,11 @@ function alarmRows(p, open, more) {
 }
 
 const POP_LIMIT = 5
+const GROUP_FIRST = 3
+const hasActive = (p) => (p.alarms || []).some(isActiveAlarm)
 const byProjectPriority = (a, b) =>
   stateRank(b.state) - stateRank(a.state) || (b.alarms?.length || 0) - (a.alarms?.length || 0) || String(b.created).localeCompare(String(a.created))
+const byActiveFirst = (a, b) => hasActive(b) - hasActive(a) || byProjectPriority(a, b)
 // 小区摘要（分组弹窗排序用）
 const commSummary = (g) => ({ rank: stateRank(worstState(g.projects)), alarms: alarmCount(g.projects), n: g.projects.length })
 function popoverHtml() {
@@ -207,16 +210,28 @@ function popoverHtml() {
   const row = (p, label) => `<li class="pj"><i style="background:${STATES[p.state]?.color || STATES.normal.color}" title="${STATES[p.state]?.label || ''}"></i>
         <span class="n">${esc(showName(p.name) || label)}</span><span class="a">${p.area ? `${p.area}㎡` : ''}</span><a class="go" data-pid="${esc(p.id)}" role="button" tabindex="0" title="查看项目详情">详情 ›</a></li>${alarmRows(p, (p.alarms || []).some(isActiveAlarm) !== toggled.has(p.id), moreSet.has(p.id))}`
   let rows
+  let grouped = false
   if (c.groups) {
-    // 终态簇：按小区分组（聚焦的小区在最前，其余按 状态 → 告警 → 项目数），前 5 个项目行的规则跨组计
-    const gs = [...c.groups].sort((a, b) => (b.key === c.focusKey) - (a.key === c.focusKey) || byPriority(commSummary(a), commSummary(b)))
-    let budget = all ? Infinity : POP_LIMIT
+    // 终态簇：按小区分组，每个小区一个组头，不会有整个小区被藏在「前 5 行」后面。
+    // 组顺序：聚焦的小区 → 有进行中告警的 → 状态 → 告警 → 项目数；组内进行中告警的项目在前。
+    // 每组默认最多 GROUP_FIRST 行（进行中告警的项目总是全部露出），其余收进本组的「更多 n 个项目」
+    grouped = true
+    const gs = [...c.groups].sort(
+      (a, b) => (b.key === c.focusKey) - (a.key === c.focusKey) || b.projects.some(hasActive) - a.projects.some(hasActive) || byPriority(commSummary(a), commSummary(b))
+    )
     rows = gs
       .map((g) => {
-        if (budget <= 0) return ''
-        const ps = [...g.projects].sort(byProjectPriority).slice(0, budget)
-        budget -= ps.length
-        return `<li class="grp"><span class="n">${esc(g.label)}</span><span class="a">${g.projects.length} 个项目</span></li>` + ps.map((p) => row(p, g.label)).join('')
+        const ps = [...g.projects].sort(byActiveFirst)
+        const nAct = ps.filter(hasActive).length
+        const open = pop.gopen.has(g.key) || gs.length === 1
+        const shown = open ? ps : ps.slice(0, Math.max(GROUP_FIRST, nAct))
+        const rest = ps.length - shown.length
+        const al = alarmCount(g.projects)
+        return (
+          `<li class="grp"><span class="n">${esc(g.label)}</span><span class="a">${g.projects.length} 个项目${al ? ` · <em>${al} 告警</em>` : ''}</span></li>` +
+          shown.map((p) => row(p, g.label)).join('') +
+          (rest > 0 ? `<li class="al al--more grp-more" data-act="gmore" data-g="${esc(g.key)}" role="button" tabindex="0">更多 ${rest} 个项目 ▾</li>` : '')
+        )
       })
       .join('')
   } else {
@@ -224,7 +239,7 @@ function popoverHtml() {
     rows = (all ? sorted : sorted.slice(0, POP_LIMIT)).map((p) => row(p, c.label)).join('')
   }
   const total = c.projects.length
-  const more = !all && total > POP_LIMIT ? `<button class="dm-pop__all" data-act="all">查看全部 ${total} 个项目</button>` : ''
+  const more = !grouped && !all && total > POP_LIMIT ? `<button class="dm-pop__all" data-act="all">查看全部 ${total} 个项目</button>` : ''
   const alarms = alarmCount(c.projects)
   return `<div class="dm-pop">
     <div class="dm-pop__h"><b>${esc(c.label)}</b><span>${esc(c.districtName)} · ${c.projects.length} 个项目${alarms ? ` · <em>${alarms} 告警</em>` : ''}</span>
@@ -240,7 +255,7 @@ function clearPopMq() {
   popMq = []
 }
 function openPopover(c, keep = false) {
-  if (!keep || !pop || pop.c.key !== c.key) pop = { c, all: false, toggled: new Set(), more: new Set() }
+  if (!keep || !pop || pop.c.key !== c.key) pop = { c, all: false, toggled: new Set(), more: new Set(), gopen: new Set(c.focusKey ? [c.focusKey] : []) }
   clearPopMq()
   info.setContent(popoverHtml())
   info.open(map, c.lnglat)
@@ -771,6 +786,10 @@ function onPopClick(e) {
   if (act === 'al' && pop) {
     const id = t.getAttribute('data-pid')
     pop.toggled.has(id) ? pop.toggled.delete(id) : pop.toggled.add(id)
+    return openPopover(pop.c, true)
+  }
+  if (act === 'gmore' && pop) {
+    pop.gopen.add(t.getAttribute('data-g'))
     return openPopover(pop.c, true)
   }
   if (act === 'more' && pop) {
@@ -1331,6 +1350,19 @@ onBeforeUnmount(() => {
 }
 .dm-pop li.grp .n {
   color: #b7d3f0;
+}
+.dm-pop li.grp {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: #0c1b35;
+}
+.dm-pop li.grp em {
+  font-style: normal;
+  color: #ff6b6b;
+}
+.dm-pop li.grp-more {
+  padding-left: calc(32px * var(--k, 1));
 }
 .dm-pop li.al--note {
   min-height: calc(28px * var(--k, 1));
