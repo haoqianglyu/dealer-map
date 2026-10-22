@@ -190,7 +190,7 @@
         <li v-for="a in alarms" :key="a.id" :class="{ on: isActiveAlarm(a) }">
           <span class="t">{{ fmtTs(a.ts) }}</span>
           <span class="d">{{ a.device }}</span>
-          <span class="c">{{ a.content }}<small>{{ isActiveAlarm(a) ? '进行中' : a.status === 1 ? '已恢复' : '已处理' }}</small></span>
+          <span class="c">{{ a.content }}<small>{{ alarmTag(a) || (isActiveAlarm(a) ? '进行中' : '') }}</small></span>
         </li>
         <li v-if="!alarms.length" class="empty">10 天内无一级告警</li>
       </ul>
@@ -230,7 +230,7 @@ import EChart from '@/components/EChart.vue'
 import * as echarts from 'echarts'
 import { me, getDistributor, getProject, getProjectConfig, getDeviceDataList, getDeviceCategories, getDeviceModels, listAlarms } from '@/api'
 import { ctrlQuery, DeviceTimeout } from '@/api/ctrl'
-import { isActiveAlarm } from '@/geo/states'
+import { isActiveAlarm, alarmTag } from '@/geo/states'
 import { regionInfo, parseRegion } from '@/utils/region'
 import { tooltipStyle, categoryAxis, valueAxis } from '@/utils/chartTheme'
 import { isShowroom, showName } from '@/utils/showroom'

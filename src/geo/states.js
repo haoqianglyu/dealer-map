@@ -21,8 +21,11 @@ export const hasNewAlarm = (projects) => projects.some((p) => p.state === 'alarm
 // 告警等级 → 状态：1 = alarm（红）、2 = warning（黄）、≥3 = notice（只在弹窗里计数，不改变标记颜色）
 export const levelState = (level) => (level === 1 ? 'alarm' : level === 2 ? 'warning' : 'notice')
 export const NOTICE_COLOR = '#5b8ff9'
-// 进行中 = 未处理（status 1）且未恢复（无 end_timestamp）；只有进行中的告警决定标记颜色
-export const isActiveAlarm = (a) => a.status === 1 && !a.end
+// 告警状态（平台）：status 1 未处理、2 处理中、3 已处理；end_timestamp 有值 = 故障已恢复。
+// 进行中 = 未处理或处理中（status 1 / 2）且未恢复；只有进行中的告警决定标记颜色
+export const isActiveAlarm = (a) => (a.status === 1 || a.status === 2) && !a.end
+// 行尾标签：已恢复 > 已处理 > 处理中（仍是进行中、仍标红）；未处理不加标签
+export const alarmTag = (a) => (a.end ? '已恢复' : a.status === 3 ? '已处理' : a.status === 2 ? '处理中' : '')
 const NEW_MS = 60 * 60 * 1000 // 1 小时内的进行中一级告警：标记闪烁
 
 // alarms（listAlarms 结果）→ Map(projectId → { state, alarmCount, newAlarm, alarms })

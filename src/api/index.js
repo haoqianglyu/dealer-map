@@ -84,7 +84,8 @@ export const listProjectsLegacy = ({ region = '' } = {}) =>
 
 // 设备告警（只读）：POST /device-alarms { page_options, level: "1", start_time, end_time }（level 为字符串，时间为毫秒）。
 // 字段：timestamp = 最近一次发生时间（created_at 为 UTC 字符串、是该记录首次创建时间，会被复用）；
-// status 1 = 未处理、3 = 已处理（updated_at = 处理时间）；end_timestamp = 故障恢复时间（有值表示已恢复）。
+// status 1 = 未处理、2 = 处理中、3 = 已处理（updated_at = 处理时间）；end_timestamp = 故障恢复时间（有值表示已恢复）。
+// 进行中 = status 1 / 2 且无 end_timestamp（geo/states.js isActiveAlarm）。
 const toAlarm = (a) => ({
   id: a.id,
   projectId: a.project_id,

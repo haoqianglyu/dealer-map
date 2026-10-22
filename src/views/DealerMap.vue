@@ -148,7 +148,7 @@
             >
               <!-- 整行是点按目标（电视规则）：已定位 → 飞到小区；未定位 → 项目详情 -->
               <span class="l1"><b class="name">{{ a.label }}</b><small>{{ a.district }}</small><em v-if="!a.located" class="unloc">未定位</em><span class="t">{{ fmtRel(a.ts) }}</span></span>
-              <span class="l2"><span v-marquee class="meta"><span>{{ a.text }}</span></span><em v-if="!a.active" class="tag">{{ a.status === 1 ? '已恢复' : '已处理' }}</em></span>
+              <span class="l2"><span v-marquee class="meta"><span>{{ a.text }}</span></span><em v-if="a.tag" class="tag" :class="{ 'tag--on': a.active }">{{ a.tag }}</em></span>
               <i class="chev" aria-hidden="true">›</i>
             </li>
           </ul>
@@ -206,7 +206,7 @@ import { loadShared, postShared } from '@/geo/shared'
 import { hasAmapKey, loadAmap } from '@/geo/amap'
 import { loadOverrides, loadSeed, lookupLocal, createGeocodeQueue, jitter } from '@/geo/geocoder'
 import { regionInfo } from '@/utils/region'
-import { STATES, applyStates, alarmStates, isActiveAlarm } from '@/geo/states'
+import { STATES, applyStates, alarmStates, isActiveAlarm, alarmTag } from '@/geo/states'
 import { applyOnline, groupsOnlineStats } from '@/geo/online'
 import { fmtNumber, fmtArea } from '@/utils/format'
 import { tooltipStyle, categoryAxis, valueAxis } from '@/utils/chartTheme'
@@ -503,7 +503,7 @@ const alarmSorted = computed(() => [...alarmJoined.value].sort((a, b) => isActiv
 const feedRow = (a) => {
   const g = projectGroup.value.get(a.projectId)
   const active = isActiveAlarm(a)
-  return { ...a, text: alarmText(a.device, a.content), active, fresh: active && Date.now() - a.ts < 3600e3, key: g.key, label: g.community || '未识别小区', district: g.districtName, located: Boolean(geoResults[g.key]?.lnglat) }
+  return { ...a, text: alarmText(a.device, a.content), active, tag: alarmTag(a), fresh: active && Date.now() - a.ts < 3600e3, key: g.key, label: g.community || '未识别小区', district: g.districtName, located: Boolean(geoResults[g.key]?.lnglat) }
 }
 // 列表只渲染前 100 条；点区县气泡要找的未定位告警排在 100 名外时，把它追加到末尾（pinnedAlarmId）
 const pinnedAlarmId = ref(null)
@@ -1530,6 +1530,9 @@ onBeforeUnmount(() => {
     font-size: 11px;
     font-style: normal;
     color: var(--dm-text-3);
+    &--on {
+      color: #ff9a9b; // 处理中：仍是进行中告警
+    }
   }
   .chev {
     position: absolute;

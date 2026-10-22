@@ -8,7 +8,7 @@ import { createWarmLights } from './warmLights'
 import { showName } from '@/utils/showroom'
 import { mountMarquee, alarmText } from '@/directives/marquee'
 import CONTEXT_CITIES from '@/data/cities-context.json'
-import { STATES, stateRank, worstState, alarmCount, hasNewAlarm, levelState, isActiveAlarm, NOTICE_COLOR } from '@/geo/states'
+import { STATES, stateRank, worstState, alarmCount, hasNewAlarm, levelState, isActiveAlarm, alarmTag, NOTICE_COLOR } from '@/geo/states'
 import { buildIndexes, query, membersOf, expansionZoom, layoutLabels, circleSize, circleFont, zoomClusterFor, levelFor as levelAt, byPriority, ZOOM_TERMINAL, textWidth, mainMass, leafIndex, anyLeafKey, queryZoom, DOT_SIZE, pickRefreshTarget } from '@/geo/cluster'
 import { fmtNumber } from '@/utils/format'
 
@@ -185,7 +185,7 @@ function alarmRows(p, open, more) {
       .map((a) => {
         const st = levelState(a.level)
         const color = st === 'notice' ? NOTICE_COLOR : STATES[st].color
-        const tag = isActiveAlarm(a) ? '' : a.status === 1 ? '（已恢复）' : '（已处理）'
+        const tag = alarmTag(a) ? `（${alarmTag(a)}）` : ''
         return `<li class="al al--row${isActiveAlarm(a) ? ' on' : ''}"><i style="background:${color}"></i><span class="t">${fmtTs(a.ts)}</span>
         <span class="n mqx"><span>${esc(alarmText(a.device, a.content))}${tag}</span></span><span class="a">${a.level}级</span></li>`
       })
