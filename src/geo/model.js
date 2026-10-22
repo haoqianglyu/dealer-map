@@ -67,7 +67,8 @@ export function toProject(raw) {
     created,
     month: created.slice(0, 7),
     enabled: raw.enabled !== false,
-    geoCity: geoDistrict || cityCode, // 高德 Geocoder city 参数直接用区县 adcode，限定在该区内匹配
+    // 高德 Geocoder / POI 的 city 参数：区县 adcode 限定在该区内；全市范围时直辖市要用 xx0000（高德没有 310100 这类「市辖区」码）
+    geoCity: geoDistrict || (/^(11|12|31|50)/.test(cityCode) ? `${cityCode.slice(0, 2)}0000` : cityCode),
     year: created.slice(0, 4),
     distributorId: raw.distributor_id || '',
     distributorName: raw.distributor_name || '',
