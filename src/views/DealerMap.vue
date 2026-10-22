@@ -148,7 +148,9 @@
             <b>告警数据无法更新</b><small>{{ alarmError }}</small>
           </div>
           <p v-else-if="alarmError" class="muted">{{ alarmError }}</p>
-          <ul v-else-if="alarmFeed.length" ref="feedEl" class="alarms">
+          <ul v-else-if="alarmFeed.length" ref="feedEl" class="alarms" :class="{ aged: alarmAged }">
+            <!-- 沿用 ≥ 5 分钟：顶部灰条（吸顶），下面的行变淡 -->
+            <li v-if="alarmAged" class="alarm-aged" role="status">自 {{ alarmUpdated }} 起无法更新告警</li>
             <li
               v-for="a in alarmFeed"
               :key="a.id"
@@ -294,7 +296,8 @@ const alarms = shallowRef([])
 const alarmError = ref('')
 const alarmsLoaded = ref(false)
 const alarmUpdated = ref('') // 最后一次成功的 hh:mm
-const alarmStale = ref(false) // 最近一次失败、沿用旧数据中（≤ 5 分钟）
+const alarmStale = ref(false) // 最近一次失败、沿用旧数据中（≤ 30 分钟）
+const alarmAged = ref(false) // 沿用已 ≥ 5 分钟：面板顶部灰条 + 列表变淡
 const alarmErrorKind = ref('')
 // 状态行告警段：正常「告警 hh:mm 更新」；沿用中「告警 hh:mm 未更新」（警示色）；过期「告警 hh:mm 起未更新」；从未成功过不显示
 const alarmLine = computed(() => {
@@ -309,7 +312,7 @@ const fit = shallowRef(null)
 const heatMetric = ref('projects')
 let alarmTimer = null
 const hhmm = (d = new Date()) => `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
-// 失败不清数据（geo/alarmPoll.js）：5 分钟内沿用 + 「告警 hh:mm 未更新」；之后清空并显示明确的错误态；403 立即清空
+// 失败不清数据（geo/alarmPoll.js）：30 分钟内沿用 + 「告警 hh:mm 未更新」（5 分钟起面板灰条）；之后清空并显示明确的错误态；403 立即清空
 const alarmTracker = createAlarmTracker()
 let alarmInflight = null
 let alarmRetry = 0
@@ -317,18 +320,24 @@ function applyAlarmView(v) {
   if (alarms.value !== v.alarms) alarms.value = v.alarms
   alarmUpdated.value = v.okAt ? hhmm(new Date(v.okAt)) : ''
   alarmStale.value = Boolean(v.staleSince) && !v.error
+  alarmAged.value = v.aged
   alarmErrorKind.value = v.error
   alarmError.value =
     v.error === 'forbidden' ? '当前账号无告警查看权限' : v.error === 'expired' ? `自 ${alarmUpdated.value} 起未取到新数据，正在自动重试` : v.error === 'failed' ? '告警加载失败，正在自动重试' : ''
 }
+let disposed = false
 function loadAlarms() {
-  if (alarmInflight) return alarmInflight
+  if (alarmInflight || disposed) return alarmInflight
   clearTimeout(alarmRetry)
+  alarmRetry = 0
   alarmInflight = (async () => {
     let v
     try {
-      v = alarmTracker.ok(await listAlarms({ level: '1', days: 10 }))
+      const list = await listAlarms({ level: '1', days: 10 })
+      if (disposed) return
+      v = alarmTracker.ok(list)
     } catch (e) {
+      if (disposed) return
       // 403 到这里已是「续期后重试仍 403」= 真无权限
       v = alarmTracker.fail(e?.response?.status)
       // 单独退避重试（10 → 20 → 40 → 60 s），不等整个 60 秒周期；无权限不重试
@@ -364,8 +373,9 @@ const onlineExpiry = setInterval(() => {
 // 与本账号项目一个都对不上 → 当未知
 const onlineView = computed(() => sane(onlineRaw.value, allProjects.value))
 let onlineInflight = null
-function refreshStatus() {
-  loadAlarms()
+// 常规 60 秒轮询：告警在退避重试中时由重试计时器负责（不打断 10 → 20 → 40 s 的节奏）；网络恢复 / 回到前台则强制立即刷新
+function refreshStatus(force = true) {
+  if (force || !alarmRetry) loadAlarms()
   if (!onlineInflight) onlineInflight = loadOnline().finally(() => (onlineInflight = null))
 }
 // 网络恢复 / 标签页回到前台：立即刷新告警与在线状态（不等下一个 60 秒周期）
@@ -970,7 +980,7 @@ onMounted(async () => {
     loadError.value = `账号信息获取失败：${errorText(e)}`
   }
   refreshStatus()
-  alarmTimer = setInterval(refreshStatus, 60000)
+  alarmTimer = setInterval(() => refreshStatus(false), 60000)
   const projP = loadProjects()
   const [ov, sd, sh] = await geoP
   overrides.value = ov
@@ -983,6 +993,7 @@ onMounted(async () => {
 })
 
 onBeforeUnmount(() => {
+  disposed = true
   clearInterval(clockTimer)
   clearInterval(onlineExpiry)
   clearInterval(alarmTimer)
@@ -1722,6 +1733,27 @@ onBeforeUnmount(() => {
   small {
     font-size: 12px;
     color: var(--dm-text-3);
+  }
+}
+.alarms.aged {
+  li:not(.alarm-aged) {
+    filter: opacity(0.7); /* 与已处理行的 opacity 叠乘，不覆盖 */
+  }
+  .alarm-aged {
+    position: sticky;
+    top: 0;
+    z-index: 2;
+    display: block;
+    height: 28px;
+    line-height: 28px;
+    margin-bottom: 4px;
+    padding: 0 10px;
+    border-radius: 4px;
+    font-size: 12px;
+    color: var(--dm-text-3);
+    background: var(--dm-panel-solid, rgba(20, 30, 50, 0.95));
+    box-shadow: inset 0 0 0 100px color-mix(in srgb, var(--dm-text-3) 14%, transparent);
+    cursor: default;
   }
 }
 .alarm-err {
