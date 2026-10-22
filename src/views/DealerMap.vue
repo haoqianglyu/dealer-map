@@ -684,6 +684,7 @@ async function revealUnlocated(d) {
 }
 // 告警列表滚到某条（在前 100 条外则追加到末尾），flash = 闪 3 次（「现在看这里」）；scroll = false 只闪不滚
 async function showAlarm(id, { flash = true, scroll = true } = {}) {
+  await nextTick() // 告警 watcher 先于渲染：等新行进 DOM
   if (id == null || !feedEl.value) return
   if (!alarmFeed.value.some((x) => x.id === id)) {
     if (!alarmSorted.value.some((x) => x.id === id)) return

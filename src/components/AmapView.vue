@@ -1033,8 +1033,9 @@ watch(
 )
 watch(
   () => [props.mode, props.heatMetric],
-  () => {
-    info && info.close()
+  ([m], [om]) => {
+    // 只在点位 ↔ 热力切换时关弹窗（点位模式下只改热力口径不关：巡览退出恢复口径时不能关掉人刚点住的弹窗）
+    if (m !== om || m === 'heat') info && info.close()
     applyFeatures()
     render(false)
   }

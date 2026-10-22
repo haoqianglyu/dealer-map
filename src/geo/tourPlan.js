@@ -10,7 +10,9 @@ const latestTs = (list) => list.reduce((m, a) => Math.max(m, a.ts || 0), 0)
 export const shortArea = (v) => (v >= 10000 ? `${(v / 10000).toFixed(1)} 万㎡` : `${fmtNumber(Math.round(v))} ㎡`)
 const areaOf = (projects) => projects.reduce((s, p) => s + (Number(p.area) || 0), 0)
 // 「#id」单项目组（未识别小区）不选
-const selectable = (c) => c && c.lnglat && !String(c.key).startsWith('#')
+// 离线小区不选（§3.4）：全部项目确认离线且无告警 / 预警
+const offlineOnly = (ps) => ps.length > 0 && ps.every((p) => p.online === false && p.state !== 'alarm' && p.state !== 'warning')
+const selectable = (c) => c && c.lnglat && !String(c.key).startsWith('#') && !offlineOnly(c.projects || [])
 
 /**
  * @returns {{ story: 'alarm' | 'scale', districts: Array<{ key, label, name, projects, alarms, hasAlarm, unlocatedOnly, unlocatedAlarms,

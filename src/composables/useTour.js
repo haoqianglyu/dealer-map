@@ -258,7 +258,7 @@ export function useTour(o) {
     const c = o.canStart()
     const th = c.reading ? idleMs * READING_FACTOR : idleMs
     const el = now() - lastInputAt
-    if (el < th) return armIdle(th - el)
+    if (el < th) return armIdle(c.reading ? Math.min(th - el, RETRY_MS) : th - el) // 读完关掉弹窗后 ≤ 10 s 回到 120 s 规则
     if (!c.ok) return armIdle(RETRY_MS)
     start()
   }
@@ -347,6 +347,9 @@ export function useTour(o) {
       if (next.key) shownAt.set(next.key, now())
       if (!next.located) {
         holdUnlocated(next)
+        await sleep(DWELL.interruptUnlocated, my) // 未定位插播期间不动镜头
+        if (!alive(my)) return
+        chip.alarm = false
         return loop(my)
       }
       interrupting = true
