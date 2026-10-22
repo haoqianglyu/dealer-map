@@ -172,6 +172,10 @@ function goalShift() {
   const { width, height } = map.getSize()
   return [width / 2 - p.x, height / 2 - p.y] // 平移结束时屏幕内容还会再移动的距离
 }
+function stopPan() {
+  cancelAnimationFrame(panRaf)
+  panGoal = null
+}
 function quickPan(dx, dy) {
   const [sx, sy] = goalShift()
   const { width, height } = map.getSize()
@@ -221,6 +225,7 @@ function boundsOf(points) {
 // 适配视野（允许小数级缩放；高德 setBounds 会向下取整一级，城市视图显得过远）
 function fitBounds(bounds, pad) {
   // 自己算：高德 setBounds / getFitZoomAndCenterByBounds 在大留白时会多缩小一级且不居中
+  stopPan() // 新的适配 / 区县放大优先：停掉还没走完的弹窗避让平移，否则它会把中心拉回旧位置
   const sw = bounds.getSouthWest()
   const ne = bounds.getNorthEast()
   const [top, right, bottom, left] = pad
@@ -240,6 +245,7 @@ function fitBounds(bounds, pad) {
 // 点击区县：缩放到该区所有小区的范围（至少到小区级别）
 // 只用区县中心附近的小区（个别小区按名称前缀在全市范围定位、或坐标离群，会把视野拉到很远）
 function zoomTo(points, center) {
+  stopPan()
   if (center) {
     const near = points.filter((p) => Math.abs(p[0] - center[0]) < 0.35 && Math.abs(p[1] - center[1]) < 0.3)
     if (near.length) points = near
@@ -404,11 +410,8 @@ function onZoom() {
 // × 用 pointerdown 直接关闭（捕获阶段，高德 InfoWindow 内部吞掉 click 时也可靠）
 function onPopDown(e) {
   downAt = [e.clientX, e.clientY]
-  if (!inPop(e.target)) {
-    // 用户开始拖动 / 点地图：停掉进行中的快速平移，不与手势抢视野
-    cancelAnimationFrame(panRaf)
-    panGoal = null
-  }
+  // 用户开始拖动 / 点地图：停掉进行中的快速平移，不与手势抢视野
+  if (!inPop(e.target)) stopPan()
   const t = e.target.closest && e.target.closest('[data-act="close"]')
   if (!t) return
   e.stopPropagation()
@@ -499,8 +502,7 @@ function focusCommunity(key) {
   map.setZoomAndCenter(Math.max(15, map.getZoom()), c.lnglat, true)
   const { width, height } = map.getSize()
   map.setCenter(map.containerToLngLat(new props.AMap.Pixel(width / 2 + (props.avoid.right - props.avoid.left) / 2, height / 2)), true)
-  cancelAnimationFrame(panRaf)
-  panGoal = null
+  stopPan()
   onZoom()
   openPopover(c)
 }
