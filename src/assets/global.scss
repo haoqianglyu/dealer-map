@@ -121,3 +121,28 @@ body {
   outline: 2px solid #35d4ff;
   outline-offset: 2px;
 }
+
+/* ---------- 主题切换动画（useTheme.switchTheme） ---------- */
+/* 圆形揭开：旧主题截图在下、新主题（实时画面）在上，由 JS 给 ::view-transition-new(root) 的 clip-path 做动画；关掉默认交叉淡入 */
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation: none;
+  mix-blend-mode: normal;
+}
+/* 过渡期间的覆盖层不吃点击：点击照常落到下面的真实页面（地图标记、按钮） */
+::view-transition {
+  pointer-events: none;
+}
+/* 揭开期间新画面里的组件自带过渡（按钮底色 .15s 等）一律关掉：圆扫过的地方直接是终态 */
+html.theme-vt *,
+html.theme-vt *::before,
+html.theme-vt *::after {
+  transition: none !important;
+}
+/* 不支持 View Transitions 的浏览器：300 ms 颜色交叉淡入（只过渡颜色类属性；logo filter 不过渡，避免黑白闪） */
+html.theme-fade,
+html.theme-fade *,
+html.theme-fade *::before,
+html.theme-fade *::after {
+  transition: background-color 0.3s ease-in-out, border-color 0.3s ease-in-out, color 0.3s ease-in-out, fill 0.3s ease-in-out, stroke 0.3s ease-in-out, box-shadow 0.3s ease-in-out !important;
+}

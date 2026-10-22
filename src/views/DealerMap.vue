@@ -83,8 +83,8 @@
             <span class="user__name">{{ userName || '…' }}</span>
           </div>
           <div class="seg seg--theme" role="group" aria-label="主题">
-            <button :class="{ on: theme === 'dark' }" :aria-pressed="theme === 'dark'" @click="setTheme('dark')">深色</button>
-            <button :class="{ on: theme === 'light' }" :aria-pressed="theme === 'light'" @click="setTheme('light')">亮色</button>
+            <button :class="{ on: theme === 'dark' }" :aria-pressed="theme === 'dark'" @click="switchTheme('dark', $event.currentTarget)">深色</button>
+            <button :class="{ on: theme === 'light' }" :aria-pressed="theme === 'light'" @click="switchTheme('light', $event.currentTarget)">亮色</button>
           </div>
           <button class="logout" title="退出登录" aria-label="退出登录" @click="logout">
             <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M10 4H5a1 1 0 0 0-1 1v14a1 1 0 0 0 1 1h5M15 8l4 4-4 4M19 12H9" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" /></svg>
@@ -215,7 +215,7 @@ import { applyOnline, groupsOnlineStats, createOnlineTracker, sane } from '@/geo
 import { fmtNumber, fmtArea } from '@/utils/format'
 import { tooltipStyle, categoryAxis, valueAxis, isLight } from '@/utils/chartTheme'
 import { vMarquee, alarmText } from '@/directives/marquee'
-import { theme, setTheme } from '@/composables/useTheme'
+import { theme, switchTheme } from '@/composables/useTheme'
 
 const helpOpen = ref(false) // 图例「?」点按/遥控确认键展开（电视无悬停）
 
