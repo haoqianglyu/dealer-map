@@ -9,7 +9,7 @@ import { showName } from '@/utils/showroom'
 import { mountMarquee, alarmText } from '@/directives/marquee'
 import CONTEXT_CITIES from '@/data/cities-context.json'
 import { STATES, stateRank, worstState, alarmCount, hasNewAlarm, levelState, isActiveAlarm, NOTICE_COLOR } from '@/geo/states'
-import { buildIndexes, query, membersOf, expansionZoom, layoutLabels, circleSize, circleFont, zoomClusterFor, levelFor as levelAt, byPriority, ZOOM_TERMINAL, mainMass, leafIndex, anyLeafKey, queryZoom } from '@/geo/cluster'
+import { buildIndexes, query, membersOf, expansionZoom, layoutLabels, circleSize, circleFont, zoomClusterFor, levelFor as levelAt, byPriority, ZOOM_TERMINAL, textWidth, mainMass, leafIndex, anyLeafKey, queryZoom } from '@/geo/cluster'
 import { fmtNumber } from '@/utils/format'
 
 // 高德地图：自定义 HTML 标记 + 暖光热力。标记四个层级（docs/fable-clustering.md）：
@@ -33,7 +33,7 @@ const props = defineProps({
   avoid: { type: Object, default: () => ({ top: 96, right: 420, bottom: 90, left: 24 }) }, // 被界面占用的屏幕边距（px）
   scale: { type: Number, default: 1 }, // 界面缩放：标记 / 弹窗只放大不缩小（2560 下与界面同比例）
 })
-const emit = defineEmits(['open-project', 'ready'])
+const emit = defineEmits(['open-project', 'district-tap', 'ready'])
 
 const MAP_STYLE = 'amap://styles/darkblue' // 老板要藏青底色（dark 是灰色）；darkblue 在 13–16 级路名较少，暂接受
 const el = ref(null)
@@ -66,14 +66,80 @@ const hitBox = (inner) => `<div class="dm-hit">${inner}</div>`
 const badgeHtml = (alarms) => (alarms ? `<span class="dm-mk__badge">${fmtNumber(alarms)} 告警</span>` : '')
 
 // ① 区县汇总圈
-function districtHtml(d) {
+const districtSize = (d) => Math.max(44, Math.min(88, 36 + Math.sqrt(d.projects.length) * 6))
+// 远景（1350 屏城市视野 ≈ 9.9 级）中心城区几个区县圈会互压：按屏幕距离算一个统一缩小系数（0.65–1），
+// 让最近的两圈之间留 8 px；只缩圆不缩字
+function districtFit(ds) {
+  if (!map || ds.length < 2) return 1
+  const pts = ds.map((d) => {
+    const p = map.lngLatToContainer(d.lnglat)
+    return [p.x, p.y, (districtSize(d) * k()) / 2]
+  })
+  let f = 1
+  for (let i = 0; i < pts.length; i++)
+    for (let j = i + 1; j < pts.length; j++) {
+      const dist = Math.hypot(pts[i][0] - pts[j][0], pts[i][1] - pts[j][1])
+      f = Math.min(f, (dist - 8 * k()) / (pts[i][2] + pts[j][2]))
+    }
+  return Math.max(0.65, Math.min(1, f))
+}
+// 区县名放哪边：默认圈下；压到别的圈 / 角标时依次试 左 / 右 / 上（都压就仍放圈下）
+const hitR = (a, b) => a.l < b.r && b.l < a.r && a.t < b.b && b.t < a.b
+function districtLabelSides(ds, fit) {
+  const K = k()
+  const geo = ds.map((d) => {
+    const p = map.lngLatToContainer(d.lnglat)
+    const r = (Math.max(36, Math.round(districtSize(d) * fit)) * K) / 2
+    const total = alarmCount(d.projects)
+    const unloc = alarmCount(d.unlocatedProjects || [])
+    const bw = total ? (textWidth(unloc ? '4 个未定位' : `${total} 告警`, unloc ? 11 : 12) + 14) * K : 0
+    const bh = (unloc ? 34 : 20) * K
+    const badge = total ? { l: p.x + r - 12 * K, r: p.x + r - 12 * K + bw, t: p.y - r - (unloc ? 24 : 9) * K, b: p.y - r - (unloc ? 24 : 9) * K + bh } : null
+    return { x: p.x, y: p.y, r, badge, w: textWidth(d.label, 13) * K + 4, h: 18 * K }
+  })
+  const blocks = geo.flatMap((g, i) => [{ i, l: g.x - g.r, r: g.x + g.r, t: g.y - g.r, b: g.y + g.r }, ...(g.badge ? [{ i, ...g.badge }] : [])])
+  const candOf = (g) => {
+    const gap = 5 * K
+    return {
+      below: { l: g.x - g.w / 2, r: g.x + g.w / 2, t: g.y + g.r + gap, b: g.y + g.r + gap + g.h },
+      left: { l: g.x - g.r - gap - g.w, r: g.x - g.r - gap, t: g.y - g.h / 2, b: g.y + g.h / 2 },
+      right: { l: g.x + g.r + gap, r: g.x + g.r + gap + g.w, t: g.y - g.h / 2, b: g.y + g.h / 2 },
+      above: { l: g.x - g.w / 2, r: g.x + g.w / 2, t: g.y - g.r - gap - g.h, b: g.y - g.r - gap },
+    }
+  }
+  const free = (i, side, rect, placed) => !blocks.some((b) => b.i !== i && hitR(rect, b)) && !placed.some((p) => hitR(rect, p)) && !(side === 'right' && geo[i].badge && hitR(rect, geo[i].badge))
+  // 第一轮：圈下就放得下的先占位；第二轮：其余的依次试 左 / 右 / 上（也避开已放的名字）
+  const out = geo.map(() => null)
+  const placed = []
+  geo.forEach((g, i) => {
+    const r = candOf(g).below
+    if (free(i, 'below', r, [])) {
+      out[i] = 'below'
+      placed.push(r)
+    }
+  })
+  geo.forEach((g, i) => {
+    if (out[i]) return
+    const c = candOf(g)
+    const side = ['left', 'right', 'above'].find((sd) => free(i, sd, c[sd], placed)) || 'below'
+    out[i] = side
+    placed.push(c[side])
+  })
+  return out
+}
+function districtHtml(d, fit = 1, side = 'below') {
   const count = d.projects.length
   const state = worstState(d.projects)
-  const size = Math.max(44, Math.min(88, 36 + Math.sqrt(count) * 6))
+  const size = Math.max(36, Math.round(districtSize(d) * fit))
   const cls = ['dm-mk', `dm-mk--${state}`, 'dm-mk--district', count >= 1000 ? 'dm-mk--big' : '', hasNewAlarm(d.projects) ? 'dm-mk--pulse' : ''].join(' ')
+  // 告警里有一部分在未定位的小区（放大后地图上找不到）：角标第二行写明「1 个未定位」/「均未定位」（两行窄角标，
+  // 不比单行宽多少，远景区县圈挤在一起时不横向压到邻圈）；入口在告警列表（点区县会滚到那条并闪一下）
+  const total = alarmCount(d.projects)
+  const unloc = alarmCount(d.unlocatedProjects || [])
+  const badge = total && unloc ? `<span class="dm-mk__badge dm-mk__badge--2">${fmtNumber(total)} 告警<em>${total === unloc ? '均' : `${fmtNumber(unloc)} 个`}未定位</em></span>` : badgeHtml(total)
   return hitBox(`<div class="${cls}" style="--size:${size}px;--c:${STATES[state].color}">
-    <span class="dm-mk__n">${fmtNumber(count)}</span>${badgeHtml(alarmCount(d.projects))}
-    <span class="dm-mk__label">${esc(d.label)}</span>
+    <span class="dm-mk__n">${fmtNumber(count)}</span>${badge}
+    <span class="dm-mk__label${side !== 'below' ? ` dm-mk__label--${side}` : ''}">${esc(d.label)}</span>
   </div>`)
 }
 // ②③④ 簇 / 小区：lay = layoutLabels 的结果 { named, label, sub }
@@ -442,6 +508,9 @@ function syncMarkers(list, anim = null) {
     if (r) {
       recs.delete(s.id)
       r.tap = s.tap
+      // 同 id 换了位置（区县中心在数据加载完后从「第一个已定位小区」换成行政中心、小区坐标被纠正）：跟着挪
+      if (!r.ll || r.ll[0] !== s.lnglat[0] || r.ll[1] !== s.lnglat[1]) r.marker.setPosition(s.lnglat)
+      r.ll = s.lnglat
       if (r.html !== s.html) {
         r.html = s.html
         r.node = tappable(s.html, () => r.tap())
@@ -449,7 +518,7 @@ function syncMarkers(list, anim = null) {
         r.marker.setzIndex(s.z)
       }
     } else {
-      r = { html: s.html, tap: s.tap }
+      r = { html: s.html, tap: s.tap, ll: s.lnglat }
       r.node = tappable(s.html, () => r.tap())
       r.marker = new AMap.Marker({ position: s.lnglat, anchor: 'center', content: r.node, zIndex: s.z })
       add.push(r.marker)
@@ -565,13 +634,18 @@ function renderMarkers(animate = true) {
     lastItems = []
     const anim = animFor(lastView, 'district', null, animate)
     lastView = { level: 'district', zq: null, items: [] }
+    const fit = districtFit(props.districts)
+    const sides = districtLabelSides(props.districts, fit)
     return syncMarkers(
-      props.districts.map((d) => ({
+      props.districts.map((d, i) => ({
         id: `d:${d.key}`,
         lnglat: d.lnglat,
-        html: districtHtml(d),
+        html: districtHtml(d, fit, sides[i]),
         z: 120 + stateRank(worstState(d.projects)),
-        tap: () => zoomTo(d.points, d.lnglat),
+        tap: () => {
+          zoomTo(d.points, d.lnglat)
+          emit('district-tap', { key: d.key, label: d.label, unlocatedAlarms: alarmCount(d.unlocatedProjects || []) })
+        },
       })),
       anim
     )
@@ -946,6 +1020,21 @@ onBeforeUnmount(() => {
   border-radius: calc(10px * var(--k, 1));
   box-shadow: 0 calc(2px * var(--k, 1)) calc(6px * var(--k, 1)) rgba(0, 0, 0, 0.4);
 }
+.dm-mk__badge--2 {
+  top: calc(-24px * var(--k, 1));
+  height: auto;
+  padding: calc(2px * var(--k, 1)) calc(7px * var(--k, 1)) calc(3px * var(--k, 1));
+  line-height: calc(16px * var(--k, 1));
+  text-align: center;
+}
+.dm-mk__badge em {
+  display: block;
+  font-style: normal;
+  font-weight: 500;
+  font-size: calc(11px * var(--k, 1));
+  line-height: calc(13px * var(--k, 1));
+  color: #ffe6b3;
+}
 .dm-mk:not(.dm-mk--district) .dm-mk__badge {
   top: -8px;
   height: calc(18px * var(--k, 1));
@@ -963,6 +1052,21 @@ onBeforeUnmount(() => {
   color: #d8ecff;
   paint-order: stroke;
   -webkit-text-stroke: calc(3px * var(--k, 1)) rgba(4, 11, 24, 0.9);
+}
+.dm-mk--district .dm-mk__label--left,
+.dm-mk--district .dm-mk__label--right {
+  top: 50%;
+  left: auto;
+  right: calc(100% + calc(5px * var(--k, 1)));
+  transform: translateY(-50%);
+}
+.dm-mk--district .dm-mk__label--right {
+  right: auto;
+  left: calc(100% + calc(5px * var(--k, 1)));
+}
+.dm-mk--district .dm-mk__label--above {
+  top: auto;
+  bottom: calc(100% + calc(5px * var(--k, 1)));
 }
 .dm-mk:not(.dm-mk--district) .dm-mk__label {
   font-size: calc(12px * var(--k, 1));

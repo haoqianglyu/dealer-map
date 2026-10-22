@@ -16,6 +16,7 @@
         :avoid="avoid"
         :scale="scale"
         @open-project="openProject"
+        @district-tap="revealUnlocated"
         @ready="mapReady = true"
       />
       <FallbackMap
@@ -133,11 +134,12 @@
             <small v-if="alarmsLoaded && allProjects.length">/ {{ alarmJoined.length }} · 近 10 天</small>
           </template>
           <p v-if="alarmError" class="muted">{{ alarmError }}</p>
-          <ul v-else-if="alarmFeed.length" class="alarms">
+          <ul v-else-if="alarmFeed.length" ref="feedEl" class="alarms">
             <li
               v-for="a in alarmFeed"
               :key="a.id"
-              :class="{ on: a.active, fresh: a.fresh, off: !a.located }"
+              :class="{ on: a.active, fresh: a.fresh, off: !a.located, flash: flashId === a.id }"
+              :data-aid="a.id"
               :title="a.located ? `${fmtAbs(a.ts)} · 点击定位到小区` : `${fmtAbs(a.ts)} · 该小区尚未定位，点击查看项目详情`"
               tabindex="0"
               role="button"
@@ -404,7 +406,7 @@ const districtMarkers = computed(() => {
     const k = g.areaDistrict || 'none'
     let d = m.get(k)
     if (!d) {
-      d = { key: k, lnglat: districtCenter(g.areaDistrict), label: g.districtName, projects: [], points: [], unlocated: 0 }
+      d = { key: k, lnglat: districtCenter(g.areaDistrict), label: g.districtName, projects: [], points: [], unlocated: 0, unlocatedProjects: [] }
       m.set(k, d)
     }
     d.projects.push(...g.projects)
@@ -412,7 +414,10 @@ const districtMarkers = computed(() => {
     if (ll) {
       d.points.push(ll)
       if (!d.lnglat) d.lnglat = ll
-    } else d.unlocated += g.projects.length
+    } else {
+      d.unlocated += g.projects.length
+      d.unlocatedProjects.push(...g.projects)
+    }
   }
   return [...m.values()].filter((d) => d.lnglat)
 })
@@ -489,6 +494,22 @@ function openProject(id) {
 }
 function tapAlarm(a) {
   a.located ? focusAlarm(a) : openProject(a.projectId)
+}
+// 点区县气泡：该区有「未定位小区」的告警时（地图上放大后看不到它们），在告警列表里滚到第一条并闪一下，
+// 行本身就是入口（未定位 → 项目详情）
+const feedEl = ref(null)
+const flashId = ref(null)
+let flashTimer = 0
+function revealUnlocated(d) {
+  if (!d?.unlocatedAlarms) return
+  const a = alarmFeed.value.find((x) => !x.located && x.active && x.district === d.label) || alarmFeed.value.find((x) => !x.located && x.district === d.label)
+  const ul = feedEl.value
+  if (!a || !ul) return
+  const li = ul.querySelector(`[data-aid="${CSS.escape(String(a.id))}"]`)
+  if (li) ul.scrollTo({ top: Math.max(0, li.offsetTop - ul.clientHeight / 2 + li.offsetHeight / 2), behavior: 'smooth' })
+  flashId.value = a.id
+  clearTimeout(flashTimer)
+  flashTimer = setTimeout(() => (flashId.value = null), 2400)
 }
 function focusAlarm(a) {
   if (!a.located) return
@@ -1332,6 +1353,12 @@ onBeforeUnmount(() => {
     color: var(--dm-text-3);
   }
 }
+@keyframes feed-flash {
+  50% {
+    background: rgba(255, 200, 80, 0.16);
+    box-shadow: inset 0 0 0 1px rgba(255, 200, 80, 0.55);
+  }
+}
 .alarms {
   height: 100%;
   overflow-y: auto;
@@ -1362,6 +1389,10 @@ onBeforeUnmount(() => {
     &:focus-visible {
       outline: 2px solid var(--dm-accent);
       outline-offset: -2px;
+    }
+    &.flash {
+      opacity: 1;
+      animation: feed-flash 0.8s ease-in-out 3;
     }
   }
   .l1,
