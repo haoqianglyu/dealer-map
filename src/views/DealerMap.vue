@@ -164,7 +164,7 @@
             <div v-for="r in areaRows" :key="r.name" class="row">
               <span class="name">{{ r.name }}</span>
               <span class="track"><i :style="{ width: r.pct + '%' }" /></span>
-              <span class="val">{{ r.count }}<small>{{ fmtArea(r.area) }}</small></span>
+              <span class="val">{{ fmtNumber(r.count) }}</span><span class="area">{{ fmtArea(r.area) }}</span>
             </div>
           </div>
           <div v-else-if="!loading" class="muted">暂无数据</div>
@@ -1508,9 +1508,10 @@ onBeforeUnmount(() => {
   gap: 8px;
   .row {
     display: grid;
-    grid-template-columns: 64px 1fr auto;
+    /* 名称 | 条 | 项目数 | 面积：数和面积各占固定宽的右对齐列，条都结束在同一 x */
+    grid-template-columns: 64px minmax(0, 1fr) 44px 74px;
     align-items: center;
-    gap: 10px;
+    column-gap: 10px;
     font-size: 13px;
   }
   .name {
@@ -1541,11 +1542,13 @@ onBeforeUnmount(() => {
     color: var(--dm-text);
     font-variant-numeric: tabular-nums;
     white-space: nowrap;
-    small {
-      margin-left: 6px;
-      font: 400 12px/1 var(--dm-font);
-      color: var(--dm-text-3);
-    }
+  }
+  .area {
+    text-align: right;
+    font: 400 12px/1 var(--dm-font);
+    color: var(--dm-text-3);
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
   }
 }
 .chart-box {
