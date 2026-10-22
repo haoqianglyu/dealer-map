@@ -9,12 +9,17 @@ import { showName } from '@/utils/showroom'
 import { mountMarquee, alarmText } from '@/directives/marquee'
 import CONTEXT_CITIES from '@/data/cities-context.json'
 import { STATES, stateRank, worstState, alarmCount, hasNewAlarm, levelState, isActiveAlarm, NOTICE_COLOR } from '@/geo/states'
+import { buildIndexes, query, membersOf, expansionZoom, layoutLabels, circleSize, circleFont, zoomClusterFor, levelFor as levelAt, byPriority, ZOOM_TERMINAL } from '@/geo/cluster'
+import { fmtNumber } from '@/utils/format'
 
-// 高德地图：自定义 HTML 标记（每个小区一个，缩小时按区县汇总）+ 暖光热力
+// 高德地图：自定义 HTML 标记 + 暖光热力。标记四个层级（docs/fable-clustering.md）：
+//   ① 区县（z < zoomCluster()，≈ 城市视野再放大一级）：每区一个汇总圈，数 = 该区全部项目（含未定位）；
+//   ② 街区簇（< 14）：屏幕 64 px 内的小区合并成一个圈，圈下只写「k 小区」（不写地名）；
+//   ③ 小区（14–16）：胶囊带小区名，48 px 内仍合并（「A 等 k 小区」）；
+//   ④ 终态（≥ 16）：按 16 级查询，同坐标 / 分期的小区永远合并，点击出分组弹窗。
 // 底图只用一个内置深色样式（两种模式共用）。地名按级别分工，同一地名只画一份：
-//   z < 12：高德只留底色 + 道路，地名全由我们画（城市名、邻近城市名、区县气泡名）；
-//   12–14：高德画全部注记（区县 / 道路 / POI），我们不画字；
-//   ≥ 14：高德注记 + 我们的小区名收进标记胶囊（数据标签，不与底图注记叠成两行）
+//   ① 级：高德只留底色 + 道路，地名全由我们画（城市名、邻近城市名、区县气泡名）；
+//   ② 级起：高德画全部注记（区县 / 道路 / POI），我们只画数字、「k 小区」、告警角标和胶囊里的小区名
 const props = defineProps({
   AMap: { type: Object, required: true },
   communities: { type: Array, default: () => [] },
@@ -30,15 +35,18 @@ const props = defineProps({
 })
 const emit = defineEmits(['open-project', 'ready'])
 
-const ZOOM_SPLIT = 12 // < 12 区县汇总，≥ 12 小区
-const ZOOM_NAMES = 14 // ≥ 14 小区标记下显示小区名
 const MAP_STYLE = 'amap://styles/darkblue' // 老板要藏青底色（dark 是灰色）；darkblue 在 13–16 级路名较少，暂接受
 const el = ref(null)
 let map = null
 let heat = null
 let info = null
-let markers = []
+let recs = new Map() // 标记 id → { marker, html, tap }（按 id 增量更新，不变的标记不动）
 let labels = []
+let indexes = null // 聚合索引（communities 变化时重建，防抖 300 ms）
+let idxTimer = 0
+let lastBox = null // 最近一次查询的范围（视野四边各外扩 25%）：平移不出这个范围就不重查
+let lastItems = []
+let fitZoom = null // 最近一次城市适配的缩放级别：区县 → 簇 的分界随它走
 let level = null
 let pop = null // { c, all, open: Set<projectId> }
 let readySent = false
@@ -50,18 +58,36 @@ const ready = () => {
 const k = () => Math.max(1, props.scale)
 
 const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c])
-const levelFor = (z) => (z < ZOOM_SPLIT ? 'district' : z < ZOOM_NAMES ? 'community' : 'named')
+const zoomCluster = () => zoomClusterFor(fitZoom)
+const levelFor = (z) => levelAt(z, zoomCluster())
 
-function markerHtml({ count, projects, district, label, named }) {
-  const state = worstState(projects)
-  const alarms = alarmCount(projects)
-  const size = district ? Math.max(44, Math.min(88, 36 + Math.sqrt(count) * 6)) : Math.max(26, Math.min(40, 20 + Math.sqrt(count) * 5))
-  const cls = ['dm-mk', `dm-mk--${state}`, district ? 'dm-mk--district' : '', named && !district ? 'dm-mk--named' : '', hasNewAlarm(projects) ? 'dm-mk--pulse' : ''].join(' ')
-  return `<div class="${cls}" style="--size:${size}px;--c:${STATES[state].color}">
-    <span class="dm-mk__n">${count}</span>
-    ${alarms ? `<span class="dm-mk__badge">${alarms} 告警</span>` : ''}
-    ${district || named ? `<span class="dm-mk__label">${esc(label)}</span>` : ''}
-  </div>`
+// 每个可点标记外包一个 ≥ 44 px 的透明点按区（遥控 / 触摸），圆的视觉尺寸不变
+const hitBox = (inner) => `<div class="dm-hit">${inner}</div>`
+const badgeHtml = (alarms) => (alarms ? `<span class="dm-mk__badge">${fmtNumber(alarms)} 告警</span>` : '')
+
+// ① 区县汇总圈
+function districtHtml(d) {
+  const count = d.projects.length
+  const state = worstState(d.projects)
+  const size = Math.max(44, Math.min(88, 36 + Math.sqrt(count) * 6))
+  const cls = ['dm-mk', `dm-mk--${state}`, 'dm-mk--district', count >= 1000 ? 'dm-mk--big' : '', hasNewAlarm(d.projects) ? 'dm-mk--pulse' : ''].join(' ')
+  return hitBox(`<div class="${cls}" style="--size:${size}px;--c:${STATES[state].color}">
+    <span class="dm-mk__n">${fmtNumber(count)}</span>${badgeHtml(alarmCount(d.projects))}
+    <span class="dm-mk__label">${esc(d.label)}</span>
+  </div>`)
+}
+// ②③④ 簇 / 小区：lay = layoutLabels 的结果 { named, label, sub }
+function itemHtml(it, lay) {
+  const S = circleSize(it.n)
+  const cls = ['dm-mk', `dm-mk--${it.state}`, lay.named ? 'dm-mk--named' : '', it.k > 1 ? 'dm-mk--cluster' : '', it.pulse ? 'dm-mk--pulse' : ''].join(' ')
+  const label = lay.named
+    ? `<span class="dm-mk__label">${esc(lay.label)}${lay.sub ? `<small>${esc(lay.sub)}</small>` : ''}</span>`
+    : lay.label
+      ? `<span class="dm-mk__label dm-mk__label--sub">${esc(lay.label)}</span>`
+      : ''
+  return hitBox(`<div class="${cls}" style="--size:${S}px;--fs:${circleFont(S)}px;--c:${STATES[it.state].color}">
+    <span class="dm-mk__n">${fmtNumber(it.n)}</span>${badgeHtml(it.alarms)}${label}
+  </div>`)
 }
 
 const z2 = (n) => String(n).padStart(2, '0')
@@ -106,19 +132,33 @@ function alarmRows(p, open, more) {
 }
 
 const POP_LIMIT = 5
+const byProjectPriority = (a, b) =>
+  stateRank(b.state) - stateRank(a.state) || (b.alarms?.length || 0) - (a.alarms?.length || 0) || String(b.created).localeCompare(String(a.created))
+// 小区摘要（分组弹窗排序用）
+const commSummary = (g) => ({ rank: stateRank(worstState(g.projects)), alarms: alarmCount(g.projects), n: g.projects.length })
 function popoverHtml() {
   const { c, all, toggled, more: moreSet } = pop
-  const sorted = [...c.projects].sort(
-    (a, b) => stateRank(b.state) - stateRank(a.state) || (b.alarms?.length || 0) - (a.alarms?.length || 0) || String(b.created).localeCompare(String(a.created))
-  )
-  const shown = all ? sorted : sorted.slice(0, POP_LIMIT)
-  const rows = shown
-    .map(
-      (p) => `<li class="pj"><i style="background:${STATES[p.state]?.color || STATES.normal.color}" title="${STATES[p.state]?.label || ''}"></i>
-        <span class="n">${esc(showName(p.name) || c.label)}</span><span class="a">${p.area ? `${p.area}㎡` : ''}</span><a class="go" data-pid="${esc(p.id)}" role="button" tabindex="0" title="查看项目详情">详情 ›</a></li>${alarmRows(p, (p.alarms || []).some(isActiveAlarm) !== toggled.has(p.id), moreSet.has(p.id))}`
-    )
-    .join('')
-  const more = !all && sorted.length > POP_LIMIT ? `<button class="dm-pop__all" data-act="all">查看全部 ${sorted.length} 个项目</button>` : ''
+  const row = (p, label) => `<li class="pj"><i style="background:${STATES[p.state]?.color || STATES.normal.color}" title="${STATES[p.state]?.label || ''}"></i>
+        <span class="n">${esc(showName(p.name) || label)}</span><span class="a">${p.area ? `${p.area}㎡` : ''}</span><a class="go" data-pid="${esc(p.id)}" role="button" tabindex="0" title="查看项目详情">详情 ›</a></li>${alarmRows(p, (p.alarms || []).some(isActiveAlarm) !== toggled.has(p.id), moreSet.has(p.id))}`
+  let rows
+  if (c.groups) {
+    // 终态簇：按小区分组（聚焦的小区在最前，其余按 状态 → 告警 → 项目数），前 5 个项目行的规则跨组计
+    const gs = [...c.groups].sort((a, b) => (b.key === c.focusKey) - (a.key === c.focusKey) || byPriority(commSummary(a), commSummary(b)))
+    let budget = all ? Infinity : POP_LIMIT
+    rows = gs
+      .map((g) => {
+        if (budget <= 0) return ''
+        const ps = [...g.projects].sort(byProjectPriority).slice(0, budget)
+        budget -= ps.length
+        return `<li class="grp"><span class="n">${esc(g.label)}</span><span class="a">${g.projects.length} 个项目</span></li>` + ps.map((p) => row(p, g.label)).join('')
+      })
+      .join('')
+  } else {
+    const sorted = [...c.projects].sort(byProjectPriority)
+    rows = (all ? sorted : sorted.slice(0, POP_LIMIT)).map((p) => row(p, c.label)).join('')
+  }
+  const total = c.projects.length
+  const more = !all && total > POP_LIMIT ? `<button class="dm-pop__all" data-act="all">查看全部 ${total} 个项目</button>` : ''
   const alarms = alarmCount(c.projects)
   return `<div class="dm-pop">
     <div class="dm-pop__h"><b>${esc(c.label)}</b><span>${esc(c.districtName)} · ${c.projects.length} 个项目${alarms ? ` · <em>${alarms} 告警</em>` : ''}</span>
@@ -223,7 +263,7 @@ function boundsOf(points) {
   return new props.AMap.Bounds([Math.min(...lngs), Math.min(...lats)], [Math.max(...lngs), Math.max(...lats)])
 }
 // 适配视野（允许小数级缩放；高德 setBounds 会向下取整一级，城市视图显得过远）
-function fitBounds(bounds, pad) {
+function fitBounds(bounds, pad, city = false) {
   // 自己算：高德 setBounds / getFitZoomAndCenterByBounds 在大留白时会多缩小一级且不居中
   stopPan() // 新的适配 / 区县放大优先：停掉还没走完的弹窗避让平移，否则它会把中心拉回旧位置
   const sw = bounds.getSouthWest()
@@ -238,6 +278,7 @@ function fitBounds(bounds, pad) {
   const spanY = Math.max(1, (ne.lat - sw.lat) * mPerDegLat)
   const res = Math.max(spanX / w, spanY / h, 2) // 米/像素
   const zoom = Math.min(17, Math.max(3, Math.log2((156543.03 * Math.cos((lat * Math.PI) / 180)) / res)))
+  if (city) fitZoom = zoom
   map.setZoomAndCenter(zoom, [(sw.lng + ne.lng) / 2, lat], true)
   map.panBy((right - left) / -2, (bottom - top) / -2)
 }
@@ -250,13 +291,25 @@ function zoomTo(points, center) {
     const near = points.filter((p) => Math.abs(p[0] - center[0]) < 0.35 && Math.abs(p[1] - center[1]) < 0.3)
     if (near.length) points = near
   }
-  if (!points?.length) return
+  if (!points?.length) {
+    // 该区还没有已定位的小区：放大到簇级的区县中心（至少有反馈）
+    if (center) map.setZoomAndCenter(Math.max(map.getZoom(), zoomCluster() + 0.5), center, false, 350)
+    return
+  }
   if (points.length === 1) {
     map.setZoomAndCenter(15, points[0], false, 600)
     return
   }
   fitBounds(boundsOf(points), padding(60))
-  if (map.getZoom() < ZOOM_SPLIT) map.setZoom(ZOOM_SPLIT, true)
+  if (map.getZoom() < zoomCluster()) map.setZoom(zoomCluster(), true)
+}
+// 点簇：放大到刚好拆开的级别（一段 350 ms 动画），并让出侧栏（目标中心向右偏半个侧栏宽）
+function zoomInto(ll, z) {
+  stopPan()
+  info.close()
+  const dx = (props.avoid.right - props.avoid.left) / 2
+  const degPerPx = 360 / (256 * Math.pow(2, z))
+  map.setZoomAndCenter(z, [ll[0] + dx * degPerPx, ll[1]], false, 350)
 }
 // 视野中心向左让出侧栏
 function centerOn(c) {
@@ -333,34 +386,108 @@ function tappable(html, onTap) {
   return node
 }
 
+// 按 id 增量同步标记：html 不变的不动（平移 / 告警刷新时不闪），变了的 setContent，消失的移除
+function syncMarkers(list) {
+  const { AMap } = props
+  const next = new Map()
+  const add = []
+  for (const s of list) {
+    let r = recs.get(s.id)
+    if (r) {
+      recs.delete(s.id)
+      r.tap = s.tap
+      if (r.html !== s.html) {
+        r.html = s.html
+        r.marker.setContent(tappable(s.html, () => r.tap()))
+        r.marker.setzIndex(s.z)
+      }
+    } else {
+      r = { html: s.html, tap: s.tap }
+      r.marker = new AMap.Marker({ position: s.lnglat, anchor: 'center', content: tappable(s.html, () => r.tap()), zIndex: s.z })
+      add.push(r.marker)
+    }
+    next.set(s.id, r)
+  }
+  if (recs.size) map.remove([...recs.values()].map((r) => r.marker))
+  if (add.length) map.add(add)
+  recs = next
+  if (next.size) requestAnimationFrame(ready)
+}
+
+// 查询范围：视野四边各外扩 25%（平移时少闪）
+function viewBox(grow = 0.25) {
+  const b = map.getBounds()
+  const sw = b.getSouthWest()
+  const ne = b.getNorthEast()
+  const dx = (ne.lng - sw.lng) * grow
+  const dy = (ne.lat - sw.lat) * grow
+  return [sw.lng - dx, sw.lat - dy, ne.lng + dx, ne.lat + dy]
+}
+const inside = (a, b) => b && a[0] >= b[0] && a[1] >= b[1] && a[2] <= b[2] && a[3] <= b[3]
+
+function rebuildIndexes() {
+  indexes = buildIndexes(props.communities, k())
+  lastBox = null
+}
+
+// 点击簇 / 小区（§5）：可拆的簇放大；终态簇（16 级仍合并）出分组弹窗；单小区出弹窗
+function onItemTap(it) {
+  if (it.clusterId == null) return openPopover(indexes.byKey.get(it.key))
+  const ez = expansionZoom(it)
+  if (ez <= ZOOM_TERMINAL) return zoomInto(it.lnglat, ez)
+  openGroup(it)
+}
+function openGroup(it, focusKey = null) {
+  const members = membersOf(indexes, it)
+  const dists = [...new Set(members.map((m) => m.districtName).filter(Boolean))]
+  openPopover({
+    key: it.id,
+    lnglat: it.lnglat,
+    label: `${it.top} 等 ${members.length} 小区`,
+    districtName: dists.join(' / '),
+    projects: members.flatMap((m) => m.projects),
+    groups: members,
+    focusKey,
+  })
+}
+
 function renderMarkers() {
   if (!map) return
-  markers = clear(markers)
-  if (props.mode === 'heat') return
-  const { AMap } = props
-  if (level === 'district') {
-    markers = props.districts.map((d) => {
-      const m = new AMap.Marker({
-        position: d.lnglat,
-        anchor: 'center',
-        content: tappable(markerHtml({ count: d.projects.length, projects: d.projects, district: true, label: d.label }), () => zoomTo(d.points, d.lnglat)),
-        zIndex: 120 + stateRank(worstState(d.projects)),
-      })
-      return m
-    })
-  } else {
-    markers = props.communities.map((c) => {
-      const m = new AMap.Marker({
-        position: c.lnglat,
-        anchor: 'center',
-        content: tappable(markerHtml({ count: c.projects.length, projects: c.projects, label: c.label, named: level === 'named' }), () => openPopover(c)),
-        zIndex: 120 + stateRank(worstState(c.projects)),
-      })
-      return m
-    })
+  if (props.mode === 'heat') {
+    lastItems = []
+    return syncMarkers([])
   }
-  map.add(markers)
-  if (markers.length) requestAnimationFrame(ready)
+  if (level === 'district') {
+    lastItems = []
+    return syncMarkers(
+      props.districts.map((d) => ({
+        id: `d:${d.key}`,
+        lnglat: d.lnglat,
+        html: districtHtml(d),
+        z: 120 + stateRank(worstState(d.projects)),
+        tap: () => zoomTo(d.points, d.lnglat),
+      }))
+    )
+  }
+  if (!indexes) rebuildIndexes()
+  lastBox = viewBox()
+  const items = query(indexes, level, lastBox, map.getZoom())
+  for (const it of items) {
+    const p = map.lngLatToContainer(it.lnglat)
+    it.x = p.x
+    it.y = p.y
+  }
+  const lay = layoutLabels(items, level, k())
+  lastItems = items
+  syncMarkers(
+    items.map((it) => ({
+      id: it.id,
+      lnglat: it.lnglat,
+      html: itemHtml(it, lay.get(it.id)),
+      z: 120 + it.rank * 2 + (it.k > 1 ? 1 : 0),
+      tap: () => onItemTap(it),
+    }))
+  )
 }
 
 // 底图要素：远景只留底色 + 道路（地名由我们画，避免同名两份）；≥ 12 级加建筑与注记（区县 / 道路 / POI 名，由高德画）
@@ -402,9 +529,13 @@ function onZoom() {
     level = next
     if (crossedSplit) info.close()
     applyFeatures()
-    renderMarkers()
     renderLabels()
   }
+  renderMarkers() // 簇随整数级别变化、标签避让随像素距离变化：每次缩放结束都重算（按 id 增量，不变的不动）
+}
+function onMove() {
+  if (level === 'district') return renderLabels()
+  if (!inside(viewBox(0), lastBox)) renderMarkers()
 }
 
 // × 用 pointerdown 直接关闭（捕获阶段，高德 InfoWindow 内部吞掉 click 时也可靠）
@@ -474,11 +605,12 @@ onMounted(() => {
     map && map.setStatus({ scrollWheel: true, dragEnable: true, doubleClickZoom: true })
   })
   heat = createWarmLights(AMap, map)
+  if (props.fit?.points?.length) fitBounds(boundsOf(props.fit.points), padding(40), true) // 地图挂载前已算好的适配
   level = levelFor(map.getZoom())
   applyFeatures()
-  if (props.fit?.points?.length) fitBounds(boundsOf(props.fit.points), padding(40)) // 地图挂载前已算好的适配
+  rebuildIndexes()
   map.on('zoomend', onZoom)
-  map.on('moveend', () => level === 'district' && renderLabels())
+  map.on('moveend', onMove)
   map.on('click', () => info.close())
   // 底图 complete / 首批标记画出 / 1.2 s 兜底：三者最早者收起首屏罩
   map.on('complete', ready)
@@ -486,7 +618,18 @@ onMounted(() => {
   render()
 })
 
-watch(() => [props.communities, props.districts, props.cityLabels], render)
+// 地理编码是渐进的：数据变化后防抖 300 ms 重建索引再重画（不在缩放事件里重建）
+watch(
+  () => [props.communities, props.districts, props.cityLabels],
+  () => {
+    clearTimeout(idxTimer)
+    idxTimer = setTimeout(() => {
+      if (!map) return
+      rebuildIndexes()
+      render()
+    }, 300)
+  }
+)
 watch(
   () => [props.mode, props.heatMetric],
   () => {
@@ -495,16 +638,23 @@ watch(
     render()
   }
 )
+// 告警聚焦：直接到最细一级（16），找到包含该小区的项（单小区或终态簇），打开它的弹窗
 function focusCommunity(key) {
   const c = props.communities.find((x) => x.key === key)
   if (!c || !map || props.mode === 'heat') return
+  if (!indexes || !indexes.byKey.has(key)) rebuildIndexes()
+  stopPan()
+  map.setZoomAndCenter(Math.max(ZOOM_TERMINAL, map.getZoom()), c.lnglat, true)
+  onZoom()
+  const it = lastItems.find((i) => i.key === key) || lastItems.find((i) => i.clusterId != null && membersOf(indexes, i).some((m) => m.key === key))
+  const at = it ? it.lnglat : c.lnglat
   // 一步到位（不再慢慢平移让出侧栏）：之后若弹窗仍被挡，avoidUi 只做一次 250 ms 的快速平移
-  map.setZoomAndCenter(Math.max(15, map.getZoom()), c.lnglat, true)
+  map.setCenter(at, true)
   const { width, height } = map.getSize()
   map.setCenter(map.containerToLngLat(new props.AMap.Pixel(width / 2 + (props.avoid.right - props.avoid.left) / 2, height / 2)), true)
-  stopPan()
-  onZoom()
-  openPopover(c)
+  onMove()
+  if (it && it.clusterId != null) openGroup(it, key)
+  else openPopover(c)
 }
 watch(
   () => props.focus,
@@ -516,6 +666,10 @@ watch(
     if (!el.value) return
     el.value.style.setProperty('--k', k())
     info && info.setOffset && info.setOffset(new props.AMap.Pixel(0, -22 * k()))
+    if (map) {
+      rebuildIndexes() // 半径随界面缩放
+      renderMarkers()
+    }
   }
 )
 watch(
@@ -523,7 +677,8 @@ watch(
   (f) => {
     if (!f || !map || !f.points?.length) return
     info.close()
-    fitBounds(boundsOf(f.points), padding(40))
+    fitBounds(boundsOf(f.points), padding(40), true)
+    onZoom() // 分界随城市视野变了：即使缩放级别没变也重判层级
   }
 )
 
@@ -537,6 +692,7 @@ onActivated(() =>
 
 onBeforeUnmount(() => {
   cancelAnimationFrame(panRaf)
+  clearTimeout(idxTimer)
   if (map) {
     heat && heat.destroy()
     map.off('zoomend', onZoom)
@@ -550,8 +706,9 @@ onBeforeUnmount(() => {
     clearPopMq()
     map.destroy()
   }
-  map = heat = info = null
-  markers = []
+  map = heat = info = indexes = null
+  recs = new Map()
+  lastItems = []
   labels = []
 })
 </script>
@@ -590,6 +747,14 @@ onBeforeUnmount(() => {
   background: rgba(216, 236, 255, 0.6) !important;
 }
 
+.dm-hit {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: calc(44px * var(--k, 1));
+  min-height: calc(44px * var(--k, 1));
+  cursor: pointer;
+}
 .dm-mk {
   position: relative;
   width: calc(var(--size) * var(--k, 1));
@@ -604,10 +769,10 @@ onBeforeUnmount(() => {
   cursor: pointer;
   transition: transform 0.12s ease;
 }
-.dm-mk:hover {
+.dm-hit:hover .dm-mk {
   transform: scale(1.06);
 }
-.dm-mk:hover .dm-mk__label {
+.dm-hit:hover .dm-mk__label {
   color: #fff;
 }
 .dm-mk__n {
@@ -615,8 +780,26 @@ onBeforeUnmount(() => {
   color: #fff;
   font-variant-numeric: tabular-nums;
 }
+.dm-mk:not(.dm-mk--district):not(.dm-mk--named) .dm-mk__n {
+  font-size: calc(var(--fs, 13px) * var(--k, 1));
+}
 .dm-mk--district .dm-mk__n {
   font-size: calc(20px * var(--k, 1));
+}
+.dm-mk--district.dm-mk--big .dm-mk__n {
+  font-size: calc(16px * var(--k, 1));
+}
+/* 多小区合并：外圈一道细叠环（区别于「一个小区多个项目」） */
+.dm-mk--cluster::before {
+  content: '';
+  position: absolute;
+  inset: calc(-5px * var(--k, 1));
+  border-radius: 50%;
+  border: 1px solid color-mix(in srgb, var(--c) 45%, transparent);
+  pointer-events: none;
+}
+.dm-mk--named.dm-mk--cluster::before {
+  border-radius: 999px;
 }
 .dm-mk__badge {
   position: absolute;
@@ -652,6 +835,20 @@ onBeforeUnmount(() => {
 .dm-mk:not(.dm-mk--district) .dm-mk__label {
   font-size: calc(12px * var(--k, 1));
   color: #b7d3f0;
+}
+.dm-mk .dm-mk__label--sub {
+  top: calc(100% + calc(3px * var(--k, 1)));
+  font-size: calc(11px * var(--k, 1));
+  color: #9fc0e0;
+  pointer-events: none;
+}
+.dm-mk--cluster .dm-mk__label--sub {
+  top: calc(100% + calc(7px * var(--k, 1)));
+}
+.dm-mk--named .dm-mk__label small {
+  margin-left: calc(4px * var(--k, 1));
+  font-size: calc(11px * var(--k, 1));
+  color: #9fc0e0;
 }
 .dm-mk--pulse::after {
   content: '';
@@ -884,6 +1081,20 @@ onBeforeUnmount(() => {
   min-height: calc(40px * var(--k, 1));
   color: #35d4ff;
   cursor: pointer;
+}
+.dm-pop li.grp {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: calc(10px * var(--k, 1));
+  min-height: calc(28px * var(--k, 1));
+  padding: 0 calc(14px * var(--k, 1));
+  font-size: calc(12px * var(--k, 1));
+  color: #8fb0d0;
+  background: rgba(120, 170, 255, 0.05);
+}
+.dm-pop li.grp .n {
+  color: #b7d3f0;
 }
 .dm-pop li.al--note {
   min-height: calc(28px * var(--k, 1));

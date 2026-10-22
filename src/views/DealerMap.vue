@@ -98,7 +98,7 @@
       <div class="legend">
         <template v-if="mode === 'markers'">
           <span v-for="(st, k) in STATES" :key="k"><i class="dot" :style="{ '--c': st.color }" />{{ st.label }}</span>
-          <span class="help" :class="{ open: helpOpen }" tabindex="0" role="button" aria-label="说明" @click="helpOpen = !helpOpen" @blur="helpOpen = false" @keydown.enter.prevent="helpOpen = !helpOpen" @keydown.esc="helpOpen = false">?<em>只显示已确认位置的小区；缩放到 12 级以上显示小区，14 级以上显示小区名</em></span>
+          <span class="help" :class="{ open: helpOpen }" tabindex="0" role="button" aria-label="说明" @click="helpOpen = !helpOpen" @blur="helpOpen = false" @keydown.enter.prevent="helpOpen = !helpOpen" @keydown.esc="helpOpen = false">?<em>区县圈 = 该区全部项目；放大后显示已确认位置的小区，相邻的合并成一个圈（双环 = 多个小区合并，点击继续放大）；14 级以上显示小区名</em></span>
         </template>
         <template v-else>
           <span class="heat-title">{{ heatMetric === 'alarms' ? '亮度 = 一级告警数（10 天）' : '亮度 = 小区内项目数' }}</span>
@@ -397,20 +397,24 @@ const communities = computed(() =>
     .map((g) => ({ key: g.key, lnglat: geoResults[g.key].lnglat, exact: true, label: g.community || '未识别小区', district: g.areaDistrict, districtName: g.districtName, projects: g.projects }))
 )
 
-// 缩小时按区县汇总
+// 缩小时按区县汇总：圈数 = 该区全部项目（含未定位，与右侧面板 / KPI 同口径）；points 只含已定位小区（点击放大用）
 const districtMarkers = computed(() => {
   const m = new Map()
-  for (const c of communities.value) {
-    const k = c.district || 'none'
+  for (const g of groups.value) {
+    const k = g.areaDistrict || 'none'
     let d = m.get(k)
     if (!d) {
-      d = { key: k, lnglat: districtCenter(c.district) || c.lnglat, label: c.districtName, projects: [], points: [] }
+      d = { key: k, lnglat: districtCenter(g.areaDistrict), label: g.districtName, projects: [], points: [], unlocated: 0 }
       m.set(k, d)
     }
-    d.projects.push(...c.projects)
-    d.points.push(c.lnglat)
+    d.projects.push(...g.projects)
+    const ll = geoResults[g.key]?.lnglat
+    if (ll) {
+      d.points.push(ll)
+      if (!d.lnglat) d.lnglat = ll
+    } else d.unlocated += g.projects.length
   }
-  return [...m.values()]
+  return [...m.values()].filter((d) => d.lnglat)
 })
 
 const fallbackPoints = computed(() =>
