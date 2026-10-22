@@ -130,8 +130,8 @@
         <TechPanel class="p-alarm" :loading="!alarmsLoaded">
           <template #title>
             一级告警
-            <em v-if="activeAlarmCount" class="pill">进行中 {{ activeAlarmCount }}</em>
-            <small v-if="alarmsLoaded && allProjects.length">/ {{ alarmJoined.length }} · 近 10 天</small>
+            <em v-if="activeAlarmCount && !alarmError" class="pill">进行中 {{ activeAlarmCount }}</em>
+            <small v-if="alarmsLoaded && allProjects.length && !alarmError">/ {{ alarmJoined.length }} · 近 10 天</small>
           </template>
           <p v-if="alarmError" class="muted">{{ alarmError }}</p>
           <ul v-else-if="alarmFeed.length" ref="feedEl" class="alarms">
@@ -200,7 +200,6 @@ import AmapView from '@/components/AmapView.vue'
 import FallbackMap from '@/components/FallbackMap.vue'
 import { listAlarms, me, getDistributor, pickProjectEndpoint, projectPage, listAllProjects, listProjectsLegacy } from '@/api'
 import { toLogin, errorText } from '@/api/http'
-import { useTokenRefresh } from '@/composables/useTokenRefresh'
 import { toProject, mergeDeveloperAliases } from '@/geo/model'
 import { mergeProjects } from '@/api/merge'
 import { loadShared, postShared } from '@/geo/shared'
@@ -243,7 +242,6 @@ const HEAT_TIERS = [
 
 const router = useRouter()
 const route = useRoute()
-useTokenRefresh()
 
 const brand = defaultBrand()
 const loading = ref(true)
@@ -275,6 +273,10 @@ async function loadAlarms() {
     alarmError.value = ''
     alarmUpdated.value = hhmm()
   } catch (e) {
+    // 403 到这里已是「续期后重试仍 403」= 真无权限。出错时不留旧数据：面板标题的「进行中 / 总数」与地图角标一起清空，
+    // 不让过期的计数和错误提示同时出现
+    alarms.value = []
+    alarmUpdated.value = ''
     alarmError.value = e?.response?.status === 403 ? '当前账号无告警查看权限' : '告警加载失败，稍后自动重试'
   } finally {
     alarmsLoaded.value = true

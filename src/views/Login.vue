@@ -96,7 +96,6 @@ sessionStorage.removeItem('dm_login_reason')
 const mobileEl = ref(null)
 const pwdEl = ref(null)
 
-session.clear()
 document.title = '登录 · 项目分布大屏'
 
 const capsCheck = (e) => (caps.value = Boolean(e.getModifierState && e.getModifierState('CapsLock')))
@@ -116,7 +115,7 @@ async function submit() {
   try {
     const data = await login(mobile.value, password.value)
     if (!data?.access_token) throw new Error('登录失败')
-    session.save(data)
+    session.save(data, { newLogin: true })
     remember.value ? localStorage.setItem(ACCOUNT_KEY, mobile.value) : localStorage.removeItem(ACCOUNT_KEY)
     localStorage.setItem('dm_remember', remember.value ? '1' : '0')
     password.value = ''

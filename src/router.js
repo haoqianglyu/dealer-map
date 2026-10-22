@@ -11,7 +11,8 @@ const routes = [
 const router = createRouter({ history: createWebHashHistory(), routes })
 
 router.beforeEach((to) => {
-  if (to.path === '/login') return true
+  // 已登录时打开登录页：回地图（只有「退出」清会话，打开书签里的 #/login 不应把所有标签页登出）
+  if (to.path === '/login') return session.token() ? { path: '/dealer-map' } : true
   if (!session.token()) return { path: '/login', query: { redirect: to.fullPath } }
   return true
 })
