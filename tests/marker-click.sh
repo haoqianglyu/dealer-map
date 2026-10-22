@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 冒烟测试：标记可点击（区县汇总气泡 → 放大；小区标记 → 弹窗）。需已登录的 agent-browser 会话停在 #/dealer-map。
+# 冒烟测试：标记可点击（区县汇总气泡 → 放大到街区簇级；簇 → 再放大；小区标记 → 弹窗）。需已登录的 agent-browser 会话停在 #/dealer-map。
 # 用法：tests/marker-click.sh   （退出码 0 = 通过）
 set -u
 ab() { agent-browser "$@"; }
@@ -23,7 +23,21 @@ nd=$(ab eval 'document.querySelectorAll(".dm-mk--district").length' | tr -d '"')
 s1=$(scale)
 echo "after district tap: scale $s0 → $s1, district bubbles $nd, community markers $n"
 [ "$n" -gt 0 ] && [ "$nd" = "0" ] && [ "$s1" != "$s0" ] || exit 1
-c=$(mkxy '.dm-mk:not(.dm-mk--district)' '')
+# 2) 落到街区簇级：应有多小区簇（叠环）且不写地名；点簇（同样抖动）→ 放大到刚好拆开的级别
+nc=$(ab eval 'document.querySelectorAll(".dm-mk--cluster").length' | tr -d '"')
+named=$(ab eval 'document.querySelectorAll(".dm-mk--named").length' | tr -d '"')
+echo "cluster level: clusters $nc, named capsules $named"
+[ "$nc" -gt 0 ] && [ "$named" = "0" ] || exit 1
+k=$(mkxy '.dm-mk--cluster' '')
+echo "cluster at: $k"
+[ -n "$k" ] && [ "$k" != "null" ] || exit 1
+z0=$(ab eval 'window.__dmMap.getZoom()' | tr -d '"')
+tap "$k"; sleep 1.5
+z1=$(ab eval 'window.__dmMap.getZoom()' | tr -d '"')
+echo "after cluster tap: zoom $z0 → $z1"
+awk "BEGIN{exit !($z1 > $z0)}" || exit 1
+echo PASS-CLUSTER
+c=$(mkxy '.dm-mk:not(.dm-mk--district):not(.dm-mk--cluster)' '')
 echo "community marker at: $c"
 [ -n "$c" ] && [ "$c" != "null" ] || exit 1
 tap "$c"; sleep 1
