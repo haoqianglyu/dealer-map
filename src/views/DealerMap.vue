@@ -98,7 +98,7 @@
       <div class="legend">
         <template v-if="mode === 'markers'">
           <span v-for="(st, k) in STATES" :key="k"><i class="dot" :style="{ '--c': st.color }" />{{ st.label }}</span>
-          <span class="help" :class="{ open: helpOpen }" tabindex="0" role="button" aria-label="说明" @click="helpOpen = !helpOpen" @blur="helpOpen = false" @keydown.enter.prevent="helpOpen = !helpOpen">?<em>只显示已确认位置的小区；缩放到 12 级以上显示小区，14 级以上显示小区名</em></span>
+          <span class="help" :class="{ open: helpOpen }" tabindex="0" role="button" aria-label="说明" @click="helpOpen = !helpOpen" @blur="helpOpen = false" @keydown.enter.prevent="helpOpen = !helpOpen" @keydown.esc="helpOpen = false">?<em>只显示已确认位置的小区；缩放到 12 级以上显示小区，14 级以上显示小区名</em></span>
         </template>
         <template v-else>
           <span class="heat-title">{{ heatMetric === 'alarms' ? '亮度 = 一级告警数（10 天）' : '亮度 = 小区内项目数' }}</span>
@@ -144,7 +144,7 @@
               @keydown.enter.prevent="focusAlarm(a)"
             >
               <span class="l1"><b class="name">{{ a.label }}</b><small>{{ a.district }}</small><span class="t">{{ fmtRel(a.ts) }}</span></span>
-              <span class="l2"><span v-marquee class="meta"><span>{{ a.device }} · {{ a.content }}</span></span><em v-if="!a.active" class="tag">{{ a.status === 1 ? '已恢复' : '已处理' }}</em><button v-if="!a.located" class="unloc" type="button" title="该小区尚未定位，点击查看项目详情" @click.stop="openProject(a.projectId)">未定位</button></span>
+              <span class="l2"><span v-marquee class="meta"><span>{{ a.text }}</span></span><em v-if="!a.active" class="tag">{{ a.status === 1 ? '已恢复' : '已处理' }}</em><button v-if="!a.located" class="unloc" type="button" title="该小区尚未定位，点击查看项目详情" @click.stop="openProject(a.projectId)">未定位</button></span>
               <i class="chev" aria-hidden="true">›</i>
             </li>
           </ul>
@@ -155,27 +155,15 @@
         </TechPanel>
 
         <TechPanel class="p-area" :title="cityName ? `${cityName} · 各区项目` : '各区项目'" :loading="loading && !allProjects.length">
-          <template v-if="areaRows.length > TOP_AREAS" #extra>
-            <button class="mini" @click="areasExpanded = !areasExpanded">{{ areasExpanded ? '收起' : `全部 ${areaRows.length}` }}</button>
-          </template>
+          <!-- 全部区县直接列出（紧凑行高）；放不下时面板内滚动（滚轮不会缩放地图） -->
           <div v-if="areaRows.length" class="rows">
-            <div v-for="r in areaRows.slice(0, TOP_AREAS)" :key="r.name" class="row" :title="`${r.name}：${r.count} 个项目 · ${fmtArea(r.area)}`">
+            <div v-for="r in areaRows" :key="r.name" class="row">
               <span class="name">{{ r.name }}</span>
               <span class="track"><i :style="{ width: r.pct + '%' }" /></span>
-              <span class="val">{{ r.count }}</span>
+              <span class="val">{{ r.count }}<small>{{ fmtArea(r.area) }}</small></span>
             </div>
           </div>
           <div v-else-if="!loading" class="muted">暂无数据</div>
-          <div v-if="areasExpanded" class="area-pop">
-            <div class="area-pop__h">{{ areaCityName }} · 全部 {{ areaRows.length }} 区<button class="x" aria-label="关闭" @click="areasExpanded = false">×</button></div>
-            <div class="rows">
-              <div v-for="r in areaRows" :key="r.name" class="row">
-                <span class="name">{{ r.name }}</span>
-                <span class="track"><i :style="{ width: r.pct + '%' }" /></span>
-                <span class="val">{{ r.count }}</span>
-              </div>
-            </div>
-          </div>
         </TechPanel>
 
         <TechPanel v-if="!compact" class="p-trend" :title="timeMode === 'year' ? '按年份新增' : '按月份新增'" :loading="loading && !allProjects.length">
@@ -217,7 +205,7 @@ import { regionInfo } from '@/utils/region'
 import { STATES, applyStates, alarmStates, isActiveAlarm } from '@/geo/states'
 import { fmtNumber, fmtArea } from '@/utils/format'
 import { tooltipStyle, categoryAxis, valueAxis } from '@/utils/chartTheme'
-import { vMarquee } from '@/directives/marquee'
+import { vMarquee, alarmText } from '@/directives/marquee'
 
 const helpOpen = ref(false) // 图例「?」点按/遥控确认键展开（电视无悬停）
 
@@ -300,6 +288,10 @@ const retryKeys = new Set()
 
 // ---------- 范围 ----------
 const regionFilter = computed(() => (typeof route.query.region === 'string' ? route.query.region : ''))
+// 默认城市 = 无锡市：每次登录 / 打开大屏都从无锡开始（「全部城市」可手动切换，本次会话内保持）；账号下没有无锡项目时退回全部城市
+const DEFAULT_REGION = '320000/320200'
+if (typeof route.query.region !== 'string') router.replace({ query: { ...route.query, region: DEFAULT_REGION } })
+let defaultChecked = false
 const scopeTitle = computed(() => distributor.value?.name || '项目分布大屏')
 const scopeHint = computed(() => (distributor.value ? '经销商账号' : '平台账号'))
 
@@ -455,7 +447,7 @@ const alarmFeed = computed(() =>
     .map((a) => {
       const g = projectGroup.value.get(a.projectId)
       const active = isActiveAlarm(a)
-      return { ...a, active, fresh: active && Date.now() - a.ts < 3600e3, key: g.key, label: g.community || '未识别小区', district: g.districtName, located: Boolean(geoResults[g.key]?.lnglat) }
+      return { ...a, text: alarmText(a.device, a.content), active, fresh: active && Date.now() - a.ts < 3600e3, key: g.key, label: g.community || '未识别小区', district: g.districtName, located: Boolean(geoResults[g.key]?.lnglat) }
     })
 )
 const z2 = (n) => String(n).padStart(2, '0')
@@ -528,11 +520,7 @@ const districtStats = computed(() => {
   return [...m.values()].sort((a, b) => b.count - a.count)
 })
 
-// 区县面板：只列主城市（所选城市 / 经销商所在城市）的区县，不含其它城市与城市汇总行
-const TOP_AREAS_FULL = 9
-const areasExpanded = ref(false)
-const TOP_AREAS = computed(() => (compact.value ? 5 : TOP_AREAS_FULL))
-const areaCityName = computed(() => cityName.value || '本市')
+// 区县面板：只列主城市（所选城市 / 经销商所在城市）的全部区县，不含其它城市与城市汇总行
 const areaRows = computed(() => {
   const m = new Map()
   for (const p of projects.value) {
@@ -738,7 +726,6 @@ function reloadAll() {
 }
 
 watch(regionFilter, async () => {
-  areasExpanded.value = false
   if (FETCH_ALL && endpoint) {
     distributorFilter.value = ''
     return
@@ -746,6 +733,11 @@ watch(regionFilter, async () => {
   await loadProjects()
 })
 watch(cityCode, (c) => loadGeojson(c))
+watch(loading, (l) => {
+  if (l || defaultChecked || !allProjects.value.length) return
+  defaultChecked = true
+  if (regionFilter.value === DEFAULT_REGION && !allProjects.value.some((p) => p.city === DEFAULT_REGION.split('/')[1])) changeRegion('')
+})
 watch(groups, geocodeGroups)
 watch(distributorOptions, loadDistributorNames)
 
@@ -921,8 +913,9 @@ onBeforeUnmount(() => {
   background: rgba(255, 255, 255, 0.06);
   border-radius: 8px;
   button {
-    height: 28px;
-    min-width: 52px;
+    position: relative;
+    height: 36px;
+    min-width: 56px;
     padding: 0 14px;
     font: inherit;
     font-size: 13px;
@@ -945,6 +938,12 @@ onBeforeUnmount(() => {
       font-weight: 600;
       background: var(--dm-accent);
     }
+    /* 点按区域扩到 40px（电视规则），视觉不变 */
+    &::after {
+      content: '';
+      position: absolute;
+      inset: -2px -1px;
+    }
   }
   &--sub {
     margin-left: -8px;
@@ -955,7 +954,7 @@ onBeforeUnmount(() => {
     }
   }
   &--mini button {
-    height: 22px;
+    height: 30px;
     min-width: 0;
     padding: 0 10px;
     font-size: 12px;
@@ -994,8 +993,9 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: center;
   gap: 6px;
-  height: 30px;
-  padding: 0 10px 0 8px;
+  position: relative;
+  height: 36px;
+  padding: 0 12px 0 10px;
   font: inherit;
   font-size: 13px;
   color: #fff;
@@ -1007,11 +1007,20 @@ onBeforeUnmount(() => {
   span {
     white-space: nowrap;
   }
-  &:hover,
+  &:hover {
+    background: rgba(255, 255, 255, 0.12);
+    border-color: var(--dm-accent);
+  }
   &:focus-visible {
     background: rgba(255, 255, 255, 0.12);
     border-color: var(--dm-accent);
-    outline: none;
+    outline: 2px solid var(--dm-accent);
+    outline-offset: 2px;
+  }
+  &::after {
+    content: '';
+    position: absolute;
+    inset: -3px;
   }
 }
 
@@ -1101,7 +1110,13 @@ onBeforeUnmount(() => {
     color: var(--dm-text-3);
     border: 1px solid var(--dm-line);
     border-radius: 50%;
-    cursor: help;
+    cursor: pointer;
+    /* 18px 的圆，点按区域 40×40 */
+    &::before {
+      content: '';
+      position: absolute;
+      inset: -11px;
+    }
     em {
       position: absolute;
       left: 50%;
@@ -1236,10 +1251,17 @@ onBeforeUnmount(() => {
 }
 .p-area {
   flex: none;
-  height: 260px;
+  max-height: 340px;
+  :deep(.panel-body) {
+    overflow-y: auto;
+    overscroll-behavior: contain;
+  }
 }
 .compact .p-area {
-  height: 176px;
+  max-height: 248px;
+  .rows {
+    gap: 5px;
+  }
 }
 .compact .alarms li {
   height: 46px;
@@ -1380,12 +1402,13 @@ onBeforeUnmount(() => {
     }
   }
   .unloc {
+    position: relative;
     flex: none;
-    height: 18px;
-    padding: 0 6px;
+    height: 28px;
+    padding: 0 10px;
     font: inherit;
-    font-size: 11px;
-    line-height: 16px;
+    font-size: 12px;
+    line-height: 26px;
     color: #ffc722;
     background: rgba(255, 199, 34, 0.1);
     border: 1px solid rgba(255, 199, 34, 0.45);
@@ -1395,6 +1418,15 @@ onBeforeUnmount(() => {
     &:focus-visible {
       background: rgba(255, 199, 34, 0.2);
       outline: none;
+    }
+    &:focus-visible {
+      outline: 2px solid #ffc722;
+      outline-offset: 1px;
+    }
+    &::after {
+      content: '';
+      position: absolute;
+      inset: -6px 0;
     }
   }
   .tag {
@@ -1411,98 +1443,6 @@ onBeforeUnmount(() => {
     font-size: 16px;
     font-style: normal;
     color: var(--dm-text-3);
-  }
-}
-.mini {
-  height: 22px;
-  padding: 0 10px;
-  font: inherit;
-  font-size: 12px;
-  color: var(--dm-accent);
-  background: rgba(53, 212, 255, 0.08);
-  border: 1px solid rgba(53, 212, 255, 0.3);
-  border-radius: 6px;
-  cursor: pointer;
-  &:hover {
-    background: rgba(53, 212, 255, 0.16);
-  }
-}
-.rows {
-  padding: 4px 16px 0;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  .row {
-    display: grid;
-    grid-template-columns: 72px 1fr 40px;
-    align-items: center;
-    gap: 10px;
-    font-size: 13px;
-  }
-  .name {
-    color: var(--dm-text-2);
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
-  .track {
-    height: 8px;
-    background: rgba(120, 170, 255, 0.08);
-    border-radius: 4px;
-    i {
-      display: block;
-      height: 100%;
-      min-width: 4px;
-      border-radius: 4px;
-      background: rgba(53, 212, 255, 0.55);
-      transition: width 0.4s ease;
-    }
-  }
-  .row:first-child .track i {
-    background: var(--dm-accent);
-  }
-  .val {
-    text-align: right;
-    font: 600 14px/1 var(--dm-num);
-    color: var(--dm-text);
-    font-variant-numeric: tabular-nums;
-  }
-}
-.area-pop {
-  position: absolute;
-  top: 0;
-  right: calc(100% + 12px);
-  width: 300px;
-  max-height: 520px;
-  padding-bottom: 12px;
-  overflow-y: auto;
-  background: rgba(6, 16, 36, 0.96);
-  border: 1px solid var(--dm-line);
-  border-radius: 10px;
-  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.5);
-  z-index: 20;
-  &__h {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    height: 44px;
-    padding: 0 12px 0 16px;
-    font-size: 14px;
-    font-weight: 600;
-    color: var(--dm-text);
-  }
-  .x {
-    width: 24px;
-    height: 24px;
-    font-size: 18px;
-    line-height: 1;
-    color: var(--dm-text-3);
-    background: none;
-    border: 0;
-    cursor: pointer;
-    &:hover {
-      color: #fff;
-    }
   }
 }
 .chart-box {

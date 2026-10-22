@@ -83,6 +83,8 @@ export function useStretchScale() {
     transform: `scale(${sx.value}, ${sy.value})`,
     transformOrigin: '0 0',
     '--ui-scale': Math.min(sx.value, sy.value),
+    // 设计稿里的小字按纵向缩放后至少 10px：font-size: max(12px, var(--pd-min-fs))
+    '--pd-min-fs': `${(10 / sy.value).toFixed(2)}px`,
   }))
-  return { scale, style }
+  return { scale, style, sx, sy }
 }

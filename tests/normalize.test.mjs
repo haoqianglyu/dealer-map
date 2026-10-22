@@ -216,3 +216,15 @@ test('E8 geoQuery 不重复拼接名称里已带的市 / 区县', () => {
   assert.equal(geoQuery('无锡市', '江阴市', '江阴'), '无锡市江阴市江阴') // 剥完不足 2 字时保留
   assert.equal(geoQuery('无锡市', '滨湖区', ''), '')
 })
+
+// ---- 告警文字去重（跑马灯）----
+test('alarmText 不重复设备名', async () => {
+  globalThis.matchMedia ??= () => ({ matches: false })
+  const { alarmText } = await import('../src/directives/marquee.js')
+  assert.equal(alarmText('三楼新风(122)', '三楼新风(122)超过更换时间，需避免滤网堵塞造成损失'), '三楼新风(122) 超过更换时间，需避免滤网堵塞造成损失')
+  assert.equal(alarmText('空气处理机(121)', '空气处理机(121)超过更换时间'), '空气处理机(121) 超过更换时间')
+  assert.equal(alarmText('三楼新风(122)', '三楼新风超过更换时间'), '三楼新风(122) 超过更换时间')
+  assert.equal(alarmText('主机', '通讯故障'), '主机 · 通讯故障')
+  assert.equal(alarmText('', '通讯故障'), '通讯故障')
+  assert.equal(alarmText('主机', ''), '主机')
+})

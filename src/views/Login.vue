@@ -380,15 +380,16 @@ onBeforeUnmount(() => cancelAnimationFrame(raf))
 .pwd {
   position: relative;
   input {
-    padding-right: 44px;
+    padding-right: 52px;
   }
 }
+/* 点按目标 ≥ 40px（电视遥控 / 触屏） */
 .eye {
   position: absolute;
   top: 50%;
-  right: 8px;
-  width: 32px;
-  height: 32px;
+  right: 4px;
+  width: 40px;
+  height: 40px;
   display: grid;
   place-items: center;
   color: #6f8fb8;
@@ -410,8 +411,10 @@ onBeforeUnmount(() => cancelAnimationFrame(raf))
 .remember {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
-  margin-top: 16px;
+  gap: 10px;
+  min-height: 40px;
+  margin-top: 6px;
+  padding-right: 12px;
   font-size: 13px;
   color: #8fb0d0;
   cursor: pointer;

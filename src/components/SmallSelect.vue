@@ -91,16 +91,15 @@ onBeforeUnmount(() => document.removeEventListener('pointerdown', onDoc))
 <style scoped>
 .ss {
   position: relative;
-  font-size: 12px;
+  font-size: max(12px, var(--pd-min-fs, 0px)); /* 详情页拉伸缩放后渲染字号 ≥ 10px */
 }
 .ss__btn {
   display: flex;
   align-items: center;
   width: 100%;
-  height: 24px;
+  height: 36px; /* 点按目标（设计稿像素，电视 1:1） */
   padding: 0 8px;
   font: inherit;
-  font-size: 12px;
   color: var(--dm-text-muted, #93b5d6);
   background: var(--dm-input-bg, rgba(7, 22, 48, 0.85));
   border: 0;
@@ -135,10 +134,11 @@ onBeforeUnmount(() => document.removeEventListener('pointerdown', onDoc))
   right: 0;
   z-index: 50;
   width: 100%;
-  max-height: 274px; /* el-select-dropdown 最大高度 */
+  max-height: 300px;
   margin: 0;
   padding: 6px 0;
   overflow-y: auto;
+  overscroll-behavior: contain;
   list-style: none;
   background: var(--dm-popover-bg, rgba(7, 22, 48, 0.96));
   border: 1px solid var(--dm-panel-border, rgba(0, 212, 255, 0.28));
@@ -149,10 +149,10 @@ onBeforeUnmount(() => document.removeEventListener('pointerdown', onDoc))
   outline: none;
 }
 .ss__list li {
-  height: 28px;
+  height: 36px;
   padding: 0 10px;
   overflow: hidden;
-  line-height: 28px;
+  line-height: 36px;
   white-space: nowrap;
   text-overflow: ellipsis;
   color: var(--dm-text-muted, #93b5d6);

@@ -18,7 +18,6 @@
       <div class="col col--left">
         <!-- ProjectSum -->
         <section class="box p-sum">
-          <BoxLoading :show="loading || (st[41] === 'loading' && !live[41])" />
           <div class="sum">
             <div class="sum__top">
               <div class="sum__name">{{ title }}</div>
@@ -33,7 +32,8 @@
               </span>
             </div>
             <div class="sum__body">
-              <div class="sum__img"><img src="/building.svg" alt="" /></div>
+              <!-- 加载圈放在图片位，不压住右侧已渲染的文字列 -->
+              <div class="sum__img"><img src="/building.svg" alt="" /><BoxLoading :show="loading || (st[41] === 'loading' && !live[41])" /></div>
               <div class="sum__cols">
                 <div class="sum__col">
                   <div class="sum__h">项目信息</div>
@@ -143,12 +143,12 @@
       <div class="col col--right">
         <!-- 电表数据（按业主要求暂时留空框，不查询 44） -->
         <section class="box p-meter">
-          <div class="series"><div class="part-h"><span class="ttl">电表数据</span></div></div>
+          <div class="series"><div class="part-h"><span class="ttl">待定</span></div></div>
         </section>
 
         <!-- 建筑能效（按业主要求留空框） -->
         <section class="box p-energy">
-          <div class="series"><div class="part-h"><span class="ttl">建筑能效</span></div></div>
+          <div class="series"><div class="part-h"><span class="ttl">待定</span></div></div>
         </section>
 
         <!-- 设备运行系统（Equipments） -->
@@ -159,11 +159,11 @@
             <div class="eq-wrap">
               <table class="eq">
                 <thead>
-                  <tr><th /><th>名称</th><th>设备 ID</th><th>设备类别</th><th>操作</th></tr>
+                  <tr><th>状态</th><th>名称</th><th>设备 ID</th><th>设备类别</th><th>操作</th></tr>
                 </thead>
                 <tbody>
                   <tr v-for="e in eqShown" :key="e.id">
-                    <td><i class="dot" :class="{ on: onlineIds.has(String(e.id)) }" :title="onlineIds.has(String(e.id)) ? '在线' : '离线/未知'" /></td>
+                    <td><span class="online" :class="{ on: onlineIds.has(String(e.id)) }">{{ onlineIds.has(String(e.id)) ? '● 在线' : '○ 离线' }}</span></td>
                     <td>{{ e.name }}</td>
                     <td class="mono">{{ e.id }}</td>
                     <td>{{ e.category }}</td>
@@ -236,7 +236,9 @@ import { tooltipStyle, categoryAxis, valueAxis } from '@/utils/chartTheme'
 import { isShowroom, showName } from '@/utils/showroom'
 
 defineOptions({ name: 'ProjectDetail' })
-const { style: screenStyle } = useStretchScale() // 与 niuniu 一致：1920×1080 画布按 x/y 拉伸铺满一屏，不滚动
+const { style: screenStyle, sy } = useStretchScale()
+// ECharts 画布字号：拉伸缩放后渲染 ≥ 10px（1350×700 时 sy≈0.65，12 → 15.4）
+const fs = (n) => Math.max(n, Math.ceil((10 / sy.value) * 10) / 10) // 与 niuniu 一致：1920×1080 画布按 x/y 拉伸铺满一屏，不滚动
 const clock = ref('')
 const WEEK = '日一二三四五六'
 function tickClock() {
@@ -426,7 +428,7 @@ function seriesOption(type) {
     grid: { left: 44, right: 12, top: 14, bottom: 24 },
     tooltip: { ...tooltipStyle, trigger: 'axis' },
     xAxis: categoryAxis({ data: rangeLabels(s.range, vals.length) }),
-    yAxis: valueAxis({ scale: true, name: type === 44 ? '(kWh)' : '', nameTextStyle: { color: '#93b5d6', fontSize: 11 } }),
+    yAxis: valueAxis({ scale: true, name: type === 44 ? '(kWh)' : '', nameTextStyle: { color: '#93b5d6', fontSize: fs(11) } }),
     series: [{ type: 'line', data: vals, smooth: true, symbolSize: 6, symbol: 'circle', ...lineStyleOf(RANGE_COLOR[s.range] || NIU.blue) }],
   }
 }
@@ -645,9 +647,10 @@ html.pd-noscroll body {
   color: var(--pd-muted);
 }
 .hbtn {
-  padding: 6px 18px;
+  min-height: 44px;
+  padding: 10px 22px;
   font: inherit;
-  font-size: 15px;
+  font-size: max(15px, var(--pd-min-fs, 0px));
   color: var(--pd-accent);
   background: rgba(0, 212, 255, 0.12);
   border: 1px solid rgba(0, 212, 255, 0.45);
@@ -741,7 +744,7 @@ html.pd-noscroll body {
   overflow: hidden;
   padding: 1px 8px;
   font: inherit;
-  font-size: 12px;
+  font-size: max(12px, var(--pd-min-fs, 0px));
   white-space: nowrap;
   text-overflow: ellipsis;
   color: var(--pd-muted);
@@ -760,7 +763,7 @@ html.pd-noscroll body {
   align-items: center;
   gap: 6px;
   margin-left: auto;
-  font-size: 12px;
+  font-size: max(12px, var(--pd-min-fs, 0px));
   color: var(--pd-muted);
   .dot {
     width: 7px;
@@ -776,9 +779,10 @@ html.pd-noscroll body {
   }
 }
 .lbtn {
-  padding: 0 8px;
+  min-height: 36px;
+  padding: 0 12px;
   font: inherit;
-  font-size: 12px;
+  font-size: max(12px, var(--pd-min-fs, 0px));
   color: var(--pd-accent);
   background: none;
   border: 1px solid rgba(0, 212, 255, 0.35);
@@ -793,6 +797,7 @@ html.pd-noscroll body {
   align-items: center;
 }
 .sum__img {
+  position: relative;
   flex: 0 0 22%;
   padding: 0 20px;
   img {
@@ -824,7 +829,7 @@ html.pd-noscroll body {
   display: flex;
   gap: 10px;
   padding: 3px 0;
-  font-size: 15px;
+  font-size: max(15px, var(--pd-min-fs, 0px));
   white-space: nowrap;
   span {
     width: 78px;
@@ -861,7 +866,7 @@ html.pd-noscroll body {
   position: absolute;
   top: 50%;
   z-index: 10;
-  width: 32px;
+  width: 40px;
   height: 60px;
   transform: translateY(-50%);
   font-size: 22px;
@@ -945,12 +950,12 @@ html.pd-noscroll body {
 .rr__id {
   flex-shrink: 0;
   margin-right: 8px;
-  font-size: 12px;
+  font-size: max(12px, var(--pd-min-fs, 0px));
   opacity: 0.6;
 }
 .rr__name {
   overflow: hidden;
-  font-size: 14px;
+  font-size: max(14px, var(--pd-min-fs, 0px));
   font-weight: bold;
   white-space: nowrap;
   text-overflow: ellipsis;
@@ -987,15 +992,13 @@ html.pd-noscroll body {
   width: 55px;
   .zh {
     margin-bottom: 2px;
-    font-size: 12px;
+    font-size: max(12px, var(--pd-min-fs, 0px));
     opacity: 0.8;
     white-space: nowrap;
   }
   .en {
-    font-size: 12px;
+    font-size: max(12px, var(--pd-min-fs, 0px));
     opacity: 0.5;
-    transform: scale(0.85);
-    transform-origin: left center;
     white-space: nowrap;
   }
 }
@@ -1010,7 +1013,7 @@ html.pd-noscroll body {
   }
   .unit {
     margin-left: 2px;
-    font-size: 11px;
+    font-size: max(11px, var(--pd-min-fs, 0px));
     opacity: 0.6;
   }
 }
@@ -1055,7 +1058,7 @@ html.pd-noscroll body {
 .pick :deep(.cp__btn) {
   min-width: 120px;
   height: 24px;
-  font-size: 12px;
+  font-size: max(12px, var(--pd-min-fs, 0px));
 }
 .tabs {
   display: flex;
@@ -1063,9 +1066,10 @@ html.pd-noscroll body {
   gap: 10px;
   margin: 8px 0 4px;
   button {
-    padding: 1px 10px;
+    min-height: 36px;
+    padding: 0 14px;
     font: inherit;
-    font-size: 12px;
+    font-size: max(12px, var(--pd-min-fs, 0px));
     color: var(--pd-muted);
     background: transparent;
     border: 1px solid rgba(147, 181, 214, 0.45);
@@ -1088,7 +1092,7 @@ html.pd-noscroll body {
 }
 .empty {
   padding: 16px;
-  font-size: 13px;
+  font-size: max(13px, var(--pd-min-fs, 0px));
   color: var(--pd-muted);
   text-align: center;
 }
@@ -1102,10 +1106,10 @@ html.pd-noscroll body {
 .eq {
   width: 100%;
   border-collapse: collapse;
-  font-size: 15px;
+  font-size: max(15px, var(--pd-min-fs, 0px));
   th {
     padding: 6px 8px;
-    font-size: 14px;
+    font-size: max(14px, var(--pd-min-fs, 0px));
     font-weight: 600;
     color: var(--pd-muted);
     text-align: left;
@@ -1119,18 +1123,16 @@ html.pd-noscroll body {
   tbody tr:nth-child(even) td {
     background: rgba(0, 212, 255, 0.03);
   }
-  .dot {
-    display: inline-block;
-    width: 6px;
-    height: 6px;
-    border-radius: 50%;
-    background: #5f6f80;
+  .online {
+    white-space: nowrap;
+    color: #8a9bb3;
     &.on {
-      background: var(--pd-accent);
+      color: var(--pd-accent);
     }
   }
   .link {
-    padding: 0;
+    min-height: 36px;
+    padding: 0 6px;
     font: inherit;
     color: var(--pd-accent);
     background: none;
@@ -1147,13 +1149,13 @@ html.pd-noscroll body {
   align-items: center;
   gap: 8px;
   padding: 10px 0 0;
-  font-size: 14px;
+  font-size: max(14px, var(--pd-min-fs, 0px));
   color: var(--pd-muted);
   button {
-    min-width: 28px;
-    height: 28px;
+    min-width: 36px;
+    height: 36px;
     font: inherit;
-    font-size: 14px;
+    font-size: max(14px, var(--pd-min-fs, 0px));
     color: var(--pd-muted);
     background: rgba(0, 212, 255, 0.06);
     border: 1px solid rgba(0, 212, 255, 0.25);
@@ -1188,7 +1190,7 @@ html.pd-noscroll body {
     grid-template-columns: 78px 1fr;
     column-gap: 8px;
     padding: 5px 4px;
-    font-size: 12px;
+    font-size: max(12px, var(--pd-min-fs, 0px));
     border-bottom: 1px dashed rgba(64, 110, 180, 0.25);
     border-left: 2px solid transparent;
     &.on {

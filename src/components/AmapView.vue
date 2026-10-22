@@ -6,10 +6,15 @@
 import { ref, watch, onMounted, onBeforeUnmount, onActivated, nextTick } from 'vue'
 import { createWarmLights } from './warmLights'
 import { showName } from '@/utils/showroom'
+import { mountMarquee, alarmText } from '@/directives/marquee'
+import CONTEXT_CITIES from '@/data/cities-context.json'
 import { STATES, stateRank, worstState, alarmCount, hasNewAlarm, levelState, isActiveAlarm, NOTICE_COLOR } from '@/geo/states'
 
 // 高德地图：自定义 HTML 标记（每个小区一个，缩小时按区县汇总）+ 暖光热力
-// 底图只用一个内置深色样式（两种模式共用）；远景（zoom < 12）隐藏底图全部地名/POI，地名由我们自己画（城市名 + 区县气泡名），避免同名出现两次
+// 底图只用一个内置深色样式（两种模式共用）。地名按级别分工，同一地名只画一份：
+//   z < 12：高德只留底色 + 道路，地名全由我们画（城市名、邻近城市名、区县气泡名）；
+//   12–14：高德画全部注记（区县 / 道路 / POI），我们不画字；
+//   ≥ 14：高德注记 + 我们的小区名收进标记胶囊（数据标签，不与底图注记叠成两行）
 const props = defineProps({
   AMap: { type: Object, required: true },
   communities: { type: Array, default: () => [] },
@@ -27,7 +32,7 @@ const emit = defineEmits(['open-project', 'ready'])
 
 const ZOOM_SPLIT = 12 // < 12 区县汇总，≥ 12 小区
 const ZOOM_NAMES = 14 // ≥ 14 小区标记下显示小区名
-const MAP_STYLE = 'amap://styles/darkblue'
+const MAP_STYLE = 'amap://styles/dark' // darkblue 预设在 13–16 级不出路名；dark 有路名、注记为灰（不抢数据色）
 const el = ref(null)
 let map = null
 let heat = null
@@ -51,7 +56,7 @@ function markerHtml({ count, projects, district, label, named }) {
   const state = worstState(projects)
   const alarms = alarmCount(projects)
   const size = district ? Math.max(44, Math.min(88, 36 + Math.sqrt(count) * 6)) : Math.max(26, Math.min(40, 20 + Math.sqrt(count) * 5))
-  const cls = ['dm-mk', `dm-mk--${state}`, district ? 'dm-mk--district' : '', hasNewAlarm(projects) ? 'dm-mk--pulse' : ''].join(' ')
+  const cls = ['dm-mk', `dm-mk--${state}`, district ? 'dm-mk--district' : '', named && !district ? 'dm-mk--named' : '', hasNewAlarm(projects) ? 'dm-mk--pulse' : ''].join(' ')
   return `<div class="${cls}" style="--size:${size}px;--c:${STATES[state].color}">
     <span class="dm-mk__n">${count}</span>
     ${alarms ? `<span class="dm-mk__badge">${alarms} 告警</span>` : ''}
@@ -64,36 +69,45 @@ const fmtTs = (ms) => {
   const d = new Date(ms)
   return `${z2(d.getMonth() + 1)}-${z2(d.getDate())} ${z2(d.getHours())}:${z2(d.getMinutes())}`
 }
-// 某项目的告警：默认折叠成一行摘要，点开再列（时间、设备、内容、等级；不含客户信息）
-function alarmRows(p, open) {
+// 某项目的告警：有进行中告警的项目默认展开（最多 3 行 +「更多」），只有已处理 / 已恢复历史的默认折叠成一行摘要；
+// 每行 时间 与「1级」固定，中间内容放不下时跑马灯（与右侧告警列表相同）
+const AL_FIRST = 3
+const AL_MAX = 20
+function alarmRows(p, open, more) {
   const list = p.alarms || []
   if (!list.length) return ''
   const active = list.filter(isActiveAlarm).length
   const l1 = list.filter((a) => a.level === 1).length
-  const head = `<li class="al al--sum${active ? ' on' : ''}" data-act="al" data-pid="${esc(p.id)}" role="button" tabindex="0">
+  const head = `<li class="al al--sum${active ? ' on' : ''}" data-act="al" data-pid="${esc(p.id)}" role="button" tabindex="0" aria-expanded="${open}">
     <i style="background:${active ? STATES.alarm.color : NOTICE_COLOR}"></i>
     <span class="n">${l1 ? `${l1} 条一级告警` : `${list.length} 条告警`}${active ? `（进行中 ${active}）` : ''} · 最近 ${fmtTs(list[0].ts)}</span>
     <span class="a">${open ? '▾' : '▸'}</span></li>`
   if (!open) return head
+  const sorted = [...list].sort((a, b) => isActiveAlarm(b) - isActiveAlarm(a) || b.ts - a.ts)
+  const shown = sorted.slice(0, more ? AL_MAX : AL_FIRST)
+  const rest = sorted.length - shown.length
   return (
     head +
-    list
-      .slice(0, 8)
+    shown
       .map((a) => {
         const st = levelState(a.level)
         const color = st === 'notice' ? NOTICE_COLOR : STATES[st].color
         const tag = isActiveAlarm(a) ? '' : a.status === 1 ? '（已恢复）' : '（已处理）'
         return `<li class="al al--row${isActiveAlarm(a) ? ' on' : ''}"><i style="background:${color}"></i><span class="t">${fmtTs(a.ts)}</span>
-        <span class="n">${esc(a.device)} · ${esc(a.content)}${tag}</span><span class="a">${a.level}级</span></li>`
+        <span class="n mqx"><span>${esc(alarmText(a.device, a.content))}${tag}</span></span><span class="a">${a.level}级</span></li>`
       })
       .join('') +
-    (list.length > 8 ? `<li class="al al--more">… 另 ${list.length - 8} 条</li>` : '')
+    (rest > 0
+      ? more
+        ? `<li class="al al--more al--note">… 另 ${rest} 条（详情页查看全部）</li>`
+        : `<li class="al al--more" data-act="more" data-pid="${esc(p.id)}" role="button" tabindex="0">更多 ${rest} 条 ▾</li>`
+      : '')
   )
 }
 
 const POP_LIMIT = 5
 function popoverHtml() {
-  const { c, all, open } = pop
+  const { c, all, toggled, more: moreSet } = pop
   const sorted = [...c.projects].sort(
     (a, b) => stateRank(b.state) - stateRank(a.state) || (b.alarms?.length || 0) - (a.alarms?.length || 0) || String(b.created).localeCompare(String(a.created))
   )
@@ -101,7 +115,7 @@ function popoverHtml() {
   const rows = shown
     .map(
       (p) => `<li class="pj"><i style="background:${STATES[p.state]?.color || STATES.normal.color}" title="${STATES[p.state]?.label || ''}"></i>
-        <span class="n">${esc(showName(p.name) || c.label)}</span><span class="a">${p.area ? `${p.area}㎡` : ''}</span><a class="go" data-pid="${esc(p.id)}" role="button" tabindex="0" title="查看项目详情">详情 ›</a></li>${alarmRows(p, open.has(p.id))}`
+        <span class="n">${esc(showName(p.name) || c.label)}</span><span class="a">${p.area ? `${p.area}㎡` : ''}</span><a class="go" data-pid="${esc(p.id)}" role="button" tabindex="0" title="查看项目详情">详情 ›</a></li>${alarmRows(p, (p.alarms || []).some(isActiveAlarm) !== toggled.has(p.id), moreSet.has(p.id))}`
     )
     .join('')
   const more = !all && sorted.length > POP_LIMIT ? `<button class="dm-pop__all" data-act="all">查看全部 ${sorted.length} 个项目</button>` : ''
@@ -114,11 +128,38 @@ function popoverHtml() {
   </div>`
 }
 
+let popMq = [] // 弹窗内跑马灯的清理函数（每次重绘 / 关闭时清掉）
+function clearPopMq() {
+  popMq.forEach((f) => f())
+  popMq = []
+}
 function openPopover(c, keep = false) {
-  if (!keep || !pop || pop.c.key !== c.key) pop = { c, all: false, open: new Set() }
+  if (!keep || !pop || pop.c.key !== c.key) pop = { c, all: false, toggled: new Set(), more: new Set() }
+  clearPopMq()
   info.setContent(popoverHtml())
   info.open(map, c.lnglat)
-  nextTick(() => requestAnimationFrame(avoidUi))
+  nextTick(() =>
+    requestAnimationFrame(() => {
+      if (!keep) avoidUi()
+      el.value?.querySelectorAll('.dm-pop .mqx').forEach((n) => popMq.push(mountMarquee(n)))
+    })
+  )
+}
+// 指针在弹窗上：滚轮 / 触控板捏合 / 触摸滑动只滚弹窗内容，不缩放、不拖动地图
+const inPop = (t) => Boolean(t && t.closest && t.closest('.dm-pop'))
+function onPopWheel(e) {
+  if (!inPop(e.target)) return
+  e.stopPropagation()
+  if (e.ctrlKey) e.preventDefault() // 触控板捏合 = ctrl + wheel：既不缩放地图也不缩放页面
+}
+function onPopTouch(e) {
+  if (inPop(e.target)) e.stopPropagation()
+}
+function onPopOver(e) {
+  if (inPop(e.target) && map) map.setStatus({ scrollWheel: false, dragEnable: false, doubleClickZoom: false })
+}
+function onPopOut(e) {
+  if (inPop(e.target) && !inPop(e.relatedTarget) && map) map.setStatus({ scrollWheel: true, dragEnable: true, doubleClickZoom: true })
 }
 // 弹窗被顶栏 / 侧栏 / 图例挡住时平移地图
 function avoidUi() {
@@ -196,9 +237,17 @@ function renderLabels() {
     const p = map.lngLatToContainer(ll)
     return p.y < props.avoid.top || p.x > width - props.avoid.right
   }
-  labels = props.cityLabels.filter((c) => !props.districts.some((d) => near(d.lnglat, c.lnglat)) && !inUi(c.lnglat)).map(
-    (c) => new AMap.Marker({ position: c.lnglat, anchor: 'center', content: `<div class="dm-city">${esc(c.name)}</div>`, zIndex: 100, bubble: true, clickable: false })
-  )
+  // 有项目的城市 + 长三角邻近城市（静态表，补远景方位感）；同名只画一次
+  const seen = new Set()
+  const all = [...props.cityLabels, ...CONTEXT_CITIES.map(([name, lng, lat]) => ({ key: name, name: `${name}市`, lnglat: [lng, lat], ctx: true }))]
+  labels = all
+    .filter((c) => {
+      const n = c.name.replace(/市$/, '')
+      if (seen.has(n)) return false
+      seen.add(n)
+      return !props.districts.some((d) => near(d.lnglat, c.lnglat)) && !inUi(c.lnglat)
+    })
+    .map((c) => new AMap.Marker({ position: c.lnglat, anchor: 'center', content: `<div class="dm-city${c.ctx ? ' dm-city--ctx' : ''}">${esc(c.name)}</div>`, zIndex: 100, bubble: true, clickable: false }))
   if (props.mode === 'heat') {
     const metric = props.heatMetric
     for (const d of props.districts) {
@@ -252,11 +301,10 @@ function renderMarkers() {
   if (markers.length) requestAnimationFrame(ready)
 }
 
-// 底图要素：道路与地名（'point' 承载区县/片区/道路/地名注记）在任何缩放、任何模式下都显示，否则看不出哪里是哪里；
-// 建筑只在小区级（≥ 区县分界）加上
+// 底图要素：远景只留底色 + 道路（地名由我们画，避免同名两份）；≥ 12 级加建筑与注记（区县 / 道路 / POI 名，由高德画）
 let featuresNow = ''
 function applyFeatures() {
-  const f = level === 'district' ? ['bg', 'road', 'point'] : ['bg', 'road', 'building', 'point']
+  const f = level === 'district' ? ['bg', 'road'] : ['bg', 'road', 'building', 'point']
   if (f.join() === featuresNow) return
   featuresNow = f.join()
   map.setFeatures(f)
@@ -305,6 +353,15 @@ function onPopDown(e) {
   e.preventDefault()
   info && info.close()
 }
+// 遥控 / 键盘：Enter 触发弹窗里的按钮（告警摘要、更多、详情）
+function onPopKey(e) {
+  if (e.key !== 'Enter' || !inPop(e.target)) return
+  const t = e.target.closest('[data-act],[data-pid]')
+  if (t) {
+    e.preventDefault()
+    t.click()
+  }
+}
 function onPopClick(e) {
   const t = e.target.closest && e.target.closest('[data-act],[data-pid]')
   if (!t) return
@@ -316,7 +373,11 @@ function onPopClick(e) {
   }
   if (act === 'al' && pop) {
     const id = t.getAttribute('data-pid')
-    pop.open.has(id) ? pop.open.delete(id) : pop.open.add(id)
+    pop.toggled.has(id) ? pop.toggled.delete(id) : pop.toggled.add(id)
+    return openPopover(pop.c, true)
+  }
+  if (act === 'more' && pop) {
+    pop.more.add(t.getAttribute('data-pid'))
     return openPopover(pop.c, true)
   }
   if (t.classList.contains('go')) emit('open-project', t.getAttribute('data-pid'))
@@ -332,11 +393,20 @@ onMounted(() => {
   })
   el.value.addEventListener('click', onPopClick)
   el.value.addEventListener('pointerdown', onPopDown, true)
+  el.value.addEventListener('wheel', onPopWheel, { capture: true, passive: false })
+  el.value.addEventListener('touchmove', onPopTouch, { capture: true, passive: true })
+  el.value.addEventListener('pointerover', onPopOver, true)
+  el.value.addEventListener('pointerout', onPopOut, true)
+  el.value.addEventListener('keydown', onPopKey)
   map.addControl(new AMap.Scale()) // 位置 / 样式由下方 CSS 覆盖（左下、图例上方）
   if (props.center) centerOn(props.center)
   info = new AMap.InfoWindow({ isCustom: true, autoMove: false, offset: new AMap.Pixel(0, -22 * k()), anchor: 'bottom-center' })
   el.value.style.setProperty('--k', k())
-  info.on('close', () => (pop = null))
+  info.on('close', () => {
+    pop = null
+    clearPopMq()
+    map && map.setStatus({ scrollWheel: true, dragEnable: true, doubleClickZoom: true })
+  })
   heat = createWarmLights(AMap, map)
   level = levelFor(map.getZoom())
   applyFeatures()
@@ -402,6 +472,12 @@ onBeforeUnmount(() => {
     map.off('zoomend', onZoom)
     el.value && el.value.removeEventListener('click', onPopClick)
     el.value && el.value.removeEventListener('pointerdown', onPopDown, true)
+    el.value && el.value.removeEventListener('wheel', onPopWheel, true)
+    el.value && el.value.removeEventListener('touchmove', onPopTouch, true)
+    el.value && el.value.removeEventListener('pointerover', onPopOver, true)
+    el.value && el.value.removeEventListener('pointerout', onPopOut, true)
+    el.value && el.value.removeEventListener('keydown', onPopKey)
+    clearPopMq()
     map.destroy()
   }
   map = heat = info = null
@@ -525,6 +601,32 @@ onBeforeUnmount(() => {
     opacity: 0;
   }
 }
+.dm-mk--named {
+  width: auto;
+  min-width: calc(var(--size) * var(--k, 1));
+  gap: calc(6px * var(--k, 1));
+  padding: 0 calc(10px * var(--k, 1)) 0 calc(4px * var(--k, 1));
+  border-radius: 999px;
+  justify-content: flex-start;
+}
+.dm-mk--named .dm-mk__n {
+  min-width: calc((var(--size) - 12px) * var(--k, 1));
+  text-align: center;
+}
+.dm-mk--named.dm-mk--pulse::after {
+  border-radius: 999px;
+}
+.dm-mk--named .dm-mk__label,
+.dm-mk:not(.dm-mk--district).dm-mk--named .dm-mk__label {
+  position: static;
+  transform: none;
+  font-size: calc(13px * var(--k, 1));
+  color: #e8f4ff;
+  -webkit-text-stroke: 0;
+}
+.dm-city--ctx {
+  color: #56708f;
+}
 .dm-city {
   font-size: calc(14px * var(--k, 1));
   font-weight: 500;
@@ -600,10 +702,10 @@ onBeforeUnmount(() => {
 }
 .dm-pop__x {
   position: absolute;
-  top: calc(6px * var(--k, 1));
-  right: calc(6px * var(--k, 1));
-  width: calc(32px * var(--k, 1));
-  height: calc(32px * var(--k, 1));
+  top: calc(4px * var(--k, 1));
+  right: calc(4px * var(--k, 1));
+  width: calc(40px * var(--k, 1));
+  height: calc(40px * var(--k, 1));
   font-size: calc(18px * var(--k, 1));
   line-height: 1;
   color: #8fb0d0;
@@ -619,6 +721,7 @@ onBeforeUnmount(() => {
 .dm-pop ul {
   max-height: calc(300px * var(--k, 1));
   overflow-y: auto;
+  overscroll-behavior: contain;
   list-style: none;
   margin: 0;
   padding: calc(4px * var(--k, 1)) 0;
@@ -628,8 +731,8 @@ onBeforeUnmount(() => {
   grid-template-columns: calc(8px * var(--k, 1)) 1fr auto auto;
   align-items: center;
   gap: calc(10px * var(--k, 1));
-  height: calc(32px * var(--k, 1));
-  padding: 0 calc(14px * var(--k, 1));
+  min-height: calc(40px * var(--k, 1));
+  padding: 0 calc(4px * var(--k, 1)) 0 calc(14px * var(--k, 1));
 }
 .dm-pop li i {
   width: calc(8px * var(--k, 1));
@@ -648,9 +751,30 @@ onBeforeUnmount(() => {
   text-align: right;
 }
 .dm-pop .go {
+  display: inline-flex;
+  align-items: center;
+  min-height: calc(40px * var(--k, 1));
+  padding: 0 calc(10px * var(--k, 1));
   color: #35d4ff;
   cursor: pointer;
   white-space: nowrap;
+  border-radius: calc(6px * var(--k, 1));
+}
+.dm-pop .go:focus-visible,
+.dm-pop li.al--sum:focus-visible,
+.dm-pop li.al--more:focus-visible {
+  outline: 2px solid #35d4ff;
+  outline-offset: -2px;
+}
+.dm-pop li.al .n.mq {
+  text-overflow: clip;
+  -webkit-mask-image: linear-gradient(90deg, transparent 0, #000 8px, #000 calc(100% - 14px), transparent);
+  mask-image: linear-gradient(90deg, transparent 0, #000 8px, #000 calc(100% - 14px), transparent);
+}
+.dm-pop li.al .n.mq > span {
+  display: inline-block;
+  padding-left: 4px;
+  will-change: transform;
 }
 .dm-pop .go:hover {
   text-decoration: underline;
@@ -670,6 +794,7 @@ onBeforeUnmount(() => {
 }
 .dm-pop li.al--sum {
   grid-template-columns: calc(6px * var(--k, 1)) 1fr auto;
+  min-height: calc(40px * var(--k, 1));
   cursor: pointer;
   border-radius: calc(4px * var(--k, 1));
 }
@@ -684,13 +809,22 @@ onBeforeUnmount(() => {
   color: #8fb0d0;
 }
 .dm-pop li.al--more {
-  display: block;
+  display: flex;
+  align-items: center;
+  min-height: calc(40px * var(--k, 1));
+  color: #35d4ff;
+  cursor: pointer;
+}
+.dm-pop li.al--note {
+  min-height: calc(28px * var(--k, 1));
+  color: #8fb0d0;
+  cursor: default;
 }
 .dm-pop__all {
   display: block;
   width: calc(100% - calc(28px * var(--k, 1)));
   margin: 0 calc(14px * var(--k, 1)) calc(12px * var(--k, 1));
-  height: calc(30px * var(--k, 1));
+  height: calc(40px * var(--k, 1));
   font: inherit;
   font-size: calc(12px * var(--k, 1));
   color: #35d4ff;

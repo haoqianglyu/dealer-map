@@ -154,7 +154,7 @@ onBeforeUnmount(() => document.removeEventListener('pointerdown', onDoc))
   align-items: center;
   gap: 8px;
   min-width: 140px;
-  height: 30px;
+  height: 40px; /* 点按目标 ≥ 40px（电视） */
   padding: 0 10px;
   font: inherit;
   font-size: 13px;
@@ -253,6 +253,7 @@ onBeforeUnmount(() => document.removeEventListener('pointerdown', onDoc))
   margin: 0;
   padding: 0;
   overflow-y: auto;
+  overscroll-behavior: contain;
   list-style: none;
   &:focus-visible {
     outline: none;
@@ -262,7 +263,7 @@ onBeforeUnmount(() => document.removeEventListener('pointerdown', onDoc))
     grid-template-columns: 1fr 70px 34px;
     align-items: center;
     gap: 8px;
-    height: 36px;
+    height: 40px;
     padding: 0 14px;
     font-size: 13px;
     color: var(--cp-text);
@@ -311,7 +312,7 @@ onBeforeUnmount(() => document.removeEventListener('pointerdown', onDoc))
 .cp--title {
   .cp__btn {
     min-width: 0;
-    height: 36px;
+    height: 40px;
     padding: 0 8px;
     gap: 10px;
     font-size: 20px;
