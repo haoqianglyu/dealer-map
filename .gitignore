@@ -5,3 +5,7 @@ dist
 .env.local
 .env.*.local
 .wrangler
+
+# real customer-community data — never in the public repo (kept locally + NAS bundle)
+worker/data/*.json
+docs/img/
