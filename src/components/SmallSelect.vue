@@ -1,12 +1,13 @@
 <template>
   <div ref="root" class="ss" :class="{ open }" :style="{ width: `${width}px` }" @keydown="onKey">
     <button ref="btn" type="button" class="ss__btn" aria-haspopup="listbox" :aria-expanded="open" :aria-label="label" @click="open ? close() : show()">
+      <span v-if="prefix" class="ss__pre">{{ prefix }}</span>
       <span class="ss__val">{{ current?.label ?? placeholder }}</span>
       <svg class="ss__arrow" viewBox="0 0 1024 1024" width="12" height="12" aria-hidden="true">
         <path fill="currentColor" d="M831.872 340.864 512 652.672 192.128 340.864a30.592 30.592 0 0 0-42.752 0 29.12 29.12 0 0 0 0 41.6L489.664 714.24a32 32 0 0 0 44.672 0l340.288-331.712a29.12 29.12 0 0 0 0-41.728 30.592 30.592 0 0 0-42.752 0z" />
       </svg>
     </button>
-    <ul v-if="open" ref="list" class="ss__list" role="listbox" tabindex="-1" :aria-activedescendant="`ss-${uid}-${active}`">
+    <ul v-if="open" ref="list" class="ss__list" :class="{ up }" role="listbox" tabindex="-1" :aria-activedescendant="`ss-${uid}-${active}`">
       <li
         v-for="(o, i) in options"
         :id="`ss-${uid}-${i}`"
@@ -35,6 +36,7 @@ const props = defineProps({
   width: { type: Number, default: 120 },
   label: { type: String, default: '' },
   placeholder: { type: String, default: '请选择' },
+  prefix: { type: String, default: '' }, // 触发框里选中值前的小标题（如「房间」）
 })
 const emit = defineEmits(['update:modelValue'])
 const uid = Math.random().toString(36).slice(2, 7)
@@ -43,14 +45,27 @@ const btn = ref(null)
 const list = ref(null)
 const open = ref(false)
 const active = ref(0)
+const up = ref(false)
 const current = computed(() => props.options.find((o) => o.value === props.modelValue))
 
 async function show() {
   open.value = true
   active.value = Math.max(0, props.options.findIndex((o) => o.value === props.modelValue))
   await nextTick()
-  list.value?.focus()
-  list.value?.querySelector('.hover')?.scrollIntoView({ block: 'nearest' })
+  // 下方放不下就向上弹（用渲染后的实际尺寸，兼容页面缩放）
+  const b = btn.value?.getBoundingClientRect()
+  const l = list.value?.getBoundingClientRect()
+  up.value = !!b && !!l && b.bottom + l.height + 16 > window.innerHeight && b.top > l.height + 16
+  list.value?.focus({ preventScroll: true })
+  reveal()
+}
+// 只滚动弹层自身：focus / scrollIntoView 会连带滚动 overflow:hidden 的外层面板，把整块内容顶上去
+function reveal() {
+  const l = list.value
+  const h = l?.querySelector('.hover')
+  if (!h) return
+  if (h.offsetTop < l.scrollTop) l.scrollTop = h.offsetTop
+  else if (h.offsetTop + h.offsetHeight > l.scrollTop + l.clientHeight) l.scrollTop = h.offsetTop + h.offsetHeight - l.clientHeight
 }
 function close(refocus = true) {
   open.value = false
@@ -74,7 +89,7 @@ function onKey(e) {
   } else if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
     e.preventDefault()
     active.value = Math.min(props.options.length - 1, Math.max(0, active.value + (e.key === 'ArrowDown' ? 1 : -1)))
-    nextTick(() => list.value?.querySelector('.hover')?.scrollIntoView({ block: 'nearest' }))
+    nextTick(reveal)
   } else if (e.key === 'Enter') {
     e.preventDefault()
     const o = props.options[active.value]
@@ -113,6 +128,10 @@ onBeforeUnmount(() => document.removeEventListener('pointerdown', onDoc))
   outline: none;
   box-shadow: 0 0 0 1px var(--dm-accent, #00d4ff) inset;
 }
+.ss__pre {
+  flex: none;
+  margin-right: 8px;
+}
 .ss__val {
   flex: 1;
   overflow: hidden;
@@ -127,6 +146,10 @@ onBeforeUnmount(() => document.removeEventListener('pointerdown', onDoc))
 }
 .ss.open .ss__arrow {
   transform: rotate(180deg);
+}
+.ss__list.up {
+  top: auto;
+  bottom: calc(100% + 12px);
 }
 .ss__list {
   position: absolute;

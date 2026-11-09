@@ -112,6 +112,10 @@
             <button :class="{ on: theme === 'dark' }" :aria-pressed="theme === 'dark'" title="深色" aria-label="深色" @click="switchTheme('dark', $event.currentTarget)"><svg class="seg__ic" viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20 14.5A8 8 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5z" /></g></svg><span v-if="!compact">深色</span></button>
             <button :class="{ on: theme === 'light' }" :aria-pressed="theme === 'light'" title="亮色" aria-label="亮色" @click="switchTheme('light', $event.currentTarget)"><svg class="seg__ic" viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4" /><path d="M12 2.5v2.2M12 19.3v2.2M2.5 12h2.2M19.3 12h2.2M5.3 5.3l1.6 1.6M17.1 17.1l1.6 1.6M5.3 18.7l1.6-1.6M17.1 6.9l1.6-1.6" /></g></svg><span v-if="!compact">亮色</span></button>
           </div>
+          <!-- 全屏：盖住浏览器顶栏（大屏用）；浏览器要求用户点按触发，不支持的设备不显示 -->
+          <button v-if="fsSupported" class="fs-btn" :aria-pressed="isFullscreen" :aria-label="isFullscreen ? '退出全屏' : '全屏'" :title="isFullscreen ? '退出全屏' : '全屏'" @click="toggleFullscreen">
+            <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" :d="isFullscreen ? 'M9 4v5H4M15 4v5h5M9 20v-5H4M15 20v-5h5' : 'M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5'" /></svg>
+          </button>
           <button class="logout" title="退出登录" aria-label="退出登录" @click="logout">
             <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M10 4H5a1 1 0 0 0-1 1v14a1 1 0 0 0 1 1h5M15 8l4 4-4 4M19 12H9" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" /></svg>
             <span>退出</span>
@@ -254,17 +258,19 @@ import { brandFor, defaultBrand } from '@/config/brand'
 import EChart from '@/components/EChart.vue'
 import AmapView from '@/components/AmapView.vue'
 import FallbackMap from '@/components/FallbackMap.vue'
-import { listAlarms, listOnlineProjectIds, me, getDistributor, pickProjectEndpoint, projectPage, listAllProjects, listProjectsLegacy } from '@/api'
+import { sharedAlarms, listOnlineProjectIds, me, getDistributor, pickProjectEndpoint, projectPage, listAllProjects, listProjectsLegacy } from '@/api'
 import { toLogin, errorText } from '@/api/http'
 import { toProject, mergeDeveloperAliases } from '@/geo/model'
+import { buildGroups } from '@/geo/groups'
 import { mergeProjects } from '@/api/merge'
 import { takePrefetch } from '@/api/prefetch'
-import { loadShared, postShared } from '@/geo/shared'
+import { loadShared, postShared, postSharedFail, mergeShared, refreshSeedBundle } from '@/geo/shared'
 import { hasAmapKey, loadAmap } from '@/geo/amap'
-import { loadOverrides, loadSeed, lookupLocal, createGeocodeQueue, jitter } from '@/geo/geocoder'
+import { loadOverrides, loadSeed, lookupLocal, createGeocodeQueue, jitter, groupFp, parseSeed, parseOverrides } from '@/geo/geocoder'
 import { regionInfo } from '@/utils/region'
 import { STATES, applyStates, alarmStates, isActiveAlarm, alarmTag, alarmCount } from '@/geo/states'
 import { useTour, tourConfig, saveTourPref } from '@/composables/useTour'
+import { setTourStateGetter, onTourRoundEnd } from '@/composables/useAutoReload'
 import { planTour, cityChip, newAlarms } from '@/geo/tourPlan'
 import { createAlarmTracker, retryDelay } from '@/geo/alarmPoll'
 import { applyOnline, groupsOnlineStats, createOnlineTracker, sane } from '@/geo/online'
@@ -272,6 +278,12 @@ import { fmtNumber, fmtArea } from '@/utils/format'
 import { tooltipStyle, categoryAxis, valueAxis, isLight } from '@/utils/chartTheme'
 import { vMarquee, alarmText } from '@/directives/marquee'
 import { theme, switchTheme } from '@/composables/useTheme'
+import { useFullscreen } from '@/composables/useFullscreen'
+import { showName } from '@/utils/showroom'
+import { createLatest } from '@/utils/latest'
+import { createIdLoader } from '@/utils/sharedFetch'
+import { stamp, expired, samePos, syncProjects, createRetryBudget, POS_TTL, FAIL_TTL } from '@/geo/resultLife'
+const { supported: fsSupported, isFullscreen, toggle: toggleFullscreen } = useFullscreen()
 
 const helpOpen = ref(false) // 图例「?」点按/遥控确认键展开（电视无悬停）
 
@@ -366,13 +378,13 @@ function applyAlarmView(v) {
 }
 let disposed = false
 function loadAlarms() {
-  if (alarmInflight || disposed) return alarmInflight
+  if (alarmInflight || disposed || !mapActive) return alarmInflight
   clearTimeout(alarmRetry)
   alarmRetry = 0
   alarmInflight = (async () => {
     let v
     try {
-      const list = await listAlarms({ level: '1', days: 10 })
+      const list = await sharedAlarms.get({ maxAge: 0 }) // 与详情页共用，并发只发一次
       if (disposed) return
       v = alarmTracker.ok(list)
     } catch (e) {
@@ -380,7 +392,7 @@ function loadAlarms() {
       // 403 到这里已是「续期后重试仍 403」= 真无权限
       v = alarmTracker.fail(e?.response?.status)
       // 单独退避重试（10 → 20 → 40 → 60 s），不等整个 60 秒周期；无权限不重试
-      if (v.error !== 'forbidden') alarmRetry = setTimeout(loadAlarms, retryDelay(v.fails))
+      if (v.error !== 'forbidden' && mapActive) alarmRetry = setTimeout(loadAlarms, retryDelay(v.fails))
     }
     applyAlarmView(v)
     alarmsLoaded.value = true
@@ -413,13 +425,17 @@ const onlineExpiry = setInterval(() => {
 const onlineView = computed(() => sane(onlineRaw.value, allProjects.value))
 let onlineInflight = null
 // 常规 60 秒轮询：告警在退避重试中时由重试计时器负责（不打断 10 → 20 → 40 s 的节奏）；网络恢复 / 回到前台则强制立即刷新
+// 进详情页时地图留在后台（keep-alive）：暂停轮询，回来时超过 60 秒没刷就补一次
+let mapActive = true
+let lastStatusAt = 0
 function refreshStatus(force = true) {
+  lastStatusAt = Date.now()
   if (force || !alarmRetry) loadAlarms()
   if (!onlineInflight) onlineInflight = loadOnline().finally(() => (onlineInflight = null))
 }
 // 网络恢复 / 标签页回到前台：立即刷新告警与在线状态（不等下一个 60 秒周期）
-const onNetBack = () => refreshStatus()
-const onVisible = () => document.visibilityState === 'visible' && alarmsLoaded.value && refreshStatus()
+const onNetBack = () => mapActive && refreshStatus()
+const onVisible = () => mapActive && document.visibilityState === 'visible' && alarmsLoaded.value && refreshStatus()
 window.addEventListener('online', onNetBack)
 document.addEventListener('visibilitychange', onVisible)
 const timeMode = ref('year')
@@ -428,7 +444,12 @@ const amapNotice = ref(hasAmapKey() ? '' : '缺少高德 Key：请在 .env.local
 const geoResults = reactive({}) // groupKey → { lnglat, level, source } | { fail, reason }
 const overrides = shallowRef({})
 const seed = shallowRef({})
-let geoReady = false // overrides + seed 加载完才开始查，避免浪费配额
+let geoReady = false // overrides + seed 到了才做本地查找
+let queueReady = false // 共享结果也到了（或超时）才允许发高德请求，避免浪费配额
+let seedSnap = {} // 种子快照（只来自 /geo-shared/seed）
+let sharedSnap = {} // 共享结果快照（只来自 /geo-shared）
+// 按最新快照合并：两边谁先到都不覆盖对方
+const applyGeoSnaps = () => (seed.value = mergeShared(seedSnap, sharedSnap))
 let queue = null
 const queuedKeys = new Set()
 const retryKeys = new Set()
@@ -514,32 +535,7 @@ const projects = computed(() => {
 })
 
 // ---------- 按小区分组 ----------
-const groups = computed(() => {
-  const m = new Map()
-  for (const p of projects.value) {
-    // 分组 / 缓存按地理编码范围（geoDistrict：区县，'' = 全市）；展示、汇总按所填区县（areaDistrict）
-    const key = p.community ? `${p.geoDistrict || p.city}|${p.community}` : `#${p.id}`
-    let g = m.get(key)
-    if (!g) {
-      g = { key, community: p.community, vague: p.vague, queries: p.queries, keywords: p.keywords, geoCity: p.geoCity, city: p.city, cityName: p.cityName, district: p.geoDistrict, areaDistrict: p.district, districtName: p.districtName, count: 0, area: 0, types: new Set(), latest: '', projects: [] }
-      m.set(key, g)
-    }
-    // 别名并入的项目：把它的原名查询串补进组里（与 keywords 一一对应），已有的缓存 / 种子仍能命中
-    if (p.aliasOf) {
-      for (const [i, q] of p.queries.entries()) {
-        if (g.queries.includes(q)) continue
-        g.queries = [...g.queries, q]
-        g.keywords = [...g.keywords, p.keywords[i]]
-      }
-    }
-    g.count++
-    g.projects.push(p)
-    g.area += p.area
-    g.types.add(p.type)
-    if (p.created > g.latest) g.latest = p.created
-  }
-  return [...m.values()]
-})
+const groups = computed(() => buildGroups(projects.value))
 
 const districtCenters = computed(() => {
   const out = {}
@@ -646,10 +642,12 @@ const alarmJoined = computed(() => alarms.value.filter((a) => projectGroup.value
 const activeAlarmCount = computed(() => alarmJoined.value.filter(isActiveAlarm).length)
 const FEED_LIMIT = 100
 const alarmSorted = computed(() => [...alarmJoined.value].sort((a, b) => isActiveAlarm(b) - isActiveAlarm(a) || b.ts - a.ts))
+// 告警要分清是哪一户：显示平台上的完整项目名（含楼栋门牌），缺失时退回小区名
+const projectLabel = (id, g) => showName(g.projects.find((p) => p.id === id)?.name?.replace(/\s+/g, ' ') || g.community) || '未识别小区' // showroom=1 时隐去户号
 const feedRow = (a) => {
   const g = projectGroup.value.get(a.projectId)
   const active = isActiveAlarm(a)
-  return { ...a, text: alarmText(a.device, a.content), active, tag: alarmTag(a), fresh: active && Date.now() - a.ts < 3600e3, key: g.key, label: g.community || '未识别小区', district: g.districtName, located: Boolean(geoResults[g.key]?.lnglat) }
+  return { ...a, text: alarmText(a.device, a.content), active, tag: alarmTag(a), fresh: active && Date.now() - a.ts < 3600e3, key: g.key, label: projectLabel(a.projectId, g), district: g.districtName, located: Boolean(geoResults[g.key]?.lnglat) }
 }
 // 列表只渲染前 100 条；点区县气泡要找的未定位告警排在 100 名外时，把它追加到末尾（pinnedAlarmId）
 const pinnedAlarmId = ref(null)
@@ -787,6 +785,7 @@ const tour = useTour({
     helpOpen.value = false
   },
   reduced: reducedMotion,
+  onRoundEnd: onTourRoundEnd,
   // 减少动态：镜头瞬移，地图层一暗一亮（150 + 150 ms）代替移动
   dip: () => {
     const el = mapLayerEl.value
@@ -796,6 +795,7 @@ const tour = useTour({
     dipTimer = setTimeout(() => el.classList.remove('tour-dip'), 150)
   },
 })
+setTourStateGetter(() => tour.state.value === 'running')
 const tourOn = computed(() => tour.enabled.value)
 // 顶栏开关：写 dm_tour（持久）；关掉时巡览中立即退出（按下那一刻的 pointerdown 已先退出，这里再兜底键盘 / 程序触发）
 function toggleTour() {
@@ -806,8 +806,20 @@ function toggleTour() {
   tour.setEnabled(v)
   saveTourPref(v, typeof localStorage === 'undefined' ? null : localStorage)
 }
-onActivated(() => tour.setActive(true))
-onDeactivated(() => tour.setActive(false))
+onActivated(() => {
+  tour.setActive(true)
+  mapActive = true
+  if (lastStatusAt && Date.now() - lastStatusAt >= 60000) refreshStatus()
+  if (metaAt && Date.now() - metaAt >= META_MS) refreshMeta()
+  mapView.value?.setHeatPaused(false)
+})
+onDeactivated(() => {
+  tour.setActive(false)
+  mapActive = false
+  clearTimeout(alarmRetry)
+  alarmRetry = 0
+  mapView.value?.setHeatPaused(true) // 进详情页：热力层不再逐帧绘制
+})
 // ?tour=now：首批标记就绪后立即开始一轮（之后按正常空闲规则）
 let tourNowTimer = 0
 if (tourCfg.now) {
@@ -839,7 +851,7 @@ function announceAlarms(fresh) {
   const g = projectGroup.value.get(a.projectId)
   const located = Boolean(geoResults[g.key]?.lnglat)
   const head = fresh.length > 1 ? `${fresh.length} 条新一级告警 · 显示最新` : '新一级告警'
-  const chip = `${head} · ${g.community || '未识别小区'} · ${alarmText(a.device, a.content)}${located ? '' : '（未定位）'}`
+  const chip = `${head} · ${projectLabel(a.projectId, g)} · ${alarmText(a.device, a.content)}${located ? '' : '（未定位）'}`
   // 巡览中：插播；否则只在列表里闪那一行，不动视野、不滚列表
   if (!tour.interrupt({ key: g.key, located, district: g.districtName, alarmId: a.id, chip })) showAlarm(a.id, { flash: true, scroll: false })
 }
@@ -1057,35 +1069,35 @@ async function loadProjects() {
     allProjects.value = mergeProjects([], raw, new Set(), toProject)
     distributorFilter.value = ''
   } catch (e) {
-    loadError.value = `项目数据加载失败：${errorText(e)}`
+    if (!stale()) loadError.value = `项目数据加载失败：${errorText(e)}` // 旧一轮的失败不污染新一轮
   } finally {
     if (!stale()) loading.value = false
   }
 }
 
+const geojsonLatest = createLatest()
 async function loadGeojson(code) {
+  const t = geojsonLatest.begin()
   geojson.value = null
   if (!code) return
   try {
-    const r = await fetch(`${import.meta.env.BASE_URL}map/city/${code}.json`)
-    if (r.ok) geojson.value = await r.json()
+    const r = await fetch(`${import.meta.env.BASE_URL}map/city/${code}.json`, { signal: t.signal })
+    if (t.stale() || !r.ok) return
+    const data = await r.json()
+    if (!t.stale()) geojson.value = data
   } catch {
-    /* 无轮廓数据时仅显示点 */
+    /* 无轮廓数据或已切换城市：仅显示点 */
   }
 }
 
-async function loadDistributorNames() {
-  const ids = distributorOptions.value.map((d) => d.id).filter((id) => !distributorNames[id]).slice(0, 30)
-  if (distributor.value?.id) distributorNames[distributor.value.id] = distributor.value.name
-  for (const id of ids) {
-    if (distributorNames[id]) continue
-    try {
-      const d = await getDistributor(id)
-      if (d?.name) distributorNames[id] = d.name
-    } catch {
-      /* 无权限查看其他经销商时显示编号 */
-    }
+// 经销商名称：按 id 单次请求、限并发（写入一个名称会重算列表，不能再触发同一批）；失败的 10 分钟后才重试
+const nameLoader = createIdLoader(getDistributor, { concurrency: 3, onValue: (id, d) => d?.name && (distributorNames[id] = d.name) })
+function loadDistributorNames() {
+  if (distributor.value?.id) {
+    distributorNames[distributor.value.id] = distributor.value.name
+    nameLoader.mark(distributor.value.id)
   }
+  nameLoader.want(distributorOptions.value.map((d) => d.id).filter((id) => !distributorNames[id]).slice(0, 30))
 }
 
 // ?reverify=1：一次性复核没有高德匹配名称的旧结果
@@ -1093,21 +1105,100 @@ const REVERIFY = route.query.reverify === '1'
 const reverifyKeys = new Set()
 const needsReverify = (r) => (r.lnglat && !r.matched && r.source !== 'override') || (r.fail && r.source === 'recheck' && !r.returned) || (r.fail && r.source === 'seed' && /需人工确认/.test(r.reason || ''))
 
+// 旧失败种子放行重查的每轮额度（一轮 = 一次元数据刷新）；重查后结果进本地 / 共享失败缓存，不会反复查
+const seedRetry = createRetryBudget(30)
+const retryAttempts = new Map() // groupKey → 连续临时失败次数（退避用）
 function geocodeGroups() {
   if (!geoReady) return
   for (const g of groups.value) {
     if (geoResults[g.key] || !g.queries.length || reverifyKeys.has(g.key)) continue
-    const local = lookupLocal(g, overrides.value, seed.value, { ignoreSeedFail: retryKeys.has(g.key) })
+    const local = lookupLocal(g, overrides.value, seed.value, { ignoreSeedFail: retryKeys.has(g.key), allowSeedRetry: seedRetry.allow })
     if (local && REVERIFY && needsReverify(local)) {
       reverifyKeys.add(g.key)
       continue
     }
-    if (local) geoResults[g.key] = local
+    if (local) geoResults[g.key] = stamp(local)
   }
-  if (!queue) return
+  if (!queue || !queueReady) return
   const todo = groups.value.filter((g) => !geoResults[g.key] && g.queries.length && !queuedKeys.has(g.key))
   todo.forEach((g) => queuedKeys.add(g.key))
   queue.add(todo)
+}
+// 让对应分组的结果失效（项目改名 / 改区域）：下次 geocodeGroups 重新定位
+function invalidateGeo(keys) {
+  for (const k of keys) {
+    delete geoResults[k]
+    queuedKeys.delete(k)
+    retryAttempts.delete(k)
+  }
+}
+// 定期核对：候选变了的失败结果、到期的结果重新走一遍本地查找；已确认的坐标只在真不同时才换，查询中不闪
+function sweepGeo({ force = false } = {}) {
+  if (!geoReady) return
+  const now = Date.now()
+  for (const g of groups.value) {
+    const r = geoResults[g.key]
+    if (!r) continue
+    const fpChanged = Boolean(r.fail && r.fp && r.fp !== groupFp(g))
+    if (!force && !fpChanged && !expired(r, now)) continue
+    const local = lookupLocal(g, overrides.value, seed.value, { allowSeedRetry: seedRetry.allow })
+    if (r.lnglat) {
+      if (local?.lnglat && !samePos(local.lnglat, r.lnglat)) geoResults[g.key] = stamp(local, { now })
+      else r.exp = now + POS_TTL
+      continue
+    }
+    if (local) {
+      if (local.lnglat || local.reason !== r.reason) geoResults[g.key] = stamp(local, { now })
+      else r.exp = now + FAIL_TTL
+    } else {
+      delete geoResults[g.key]
+      queuedKeys.delete(g.key)
+    }
+  }
+  geocodeGroups()
+}
+// 定期刷新项目元数据：只替换变了的项目，失败时不打扰页面，下一轮再试
+const META_MS = 15 * 60 * 1000
+let metaTimer = 0
+let sweepTimer = 0
+let metaBusy = false
+let metaAt = 0
+let seedVersion = ''
+async function refreshMeta() {
+  if (metaBusy || disposed || !endpoint || !FETCH_ALL || loading.value) return
+  const seq = loadSeq
+  const stale = () => disposed || seq !== loadSeq
+  metaBusy = true
+  metaAt = Date.now()
+  try {
+    const raw = await listAllProjects(endpoint, { region: '', limit: PAGE_SIZE, concurrency: 2, isStale: stale })
+    if (stale() || !raw.length) return
+    const r = syncProjects(allProjects.value, mergeProjects([], raw, new Set(), toProject))
+    if (r.changed) {
+      allProjects.value = r.list
+      totalVisible.value = r.list.length
+    }
+    invalidateGeo(r.invalidKeys)
+    const sh = await loadShared()
+    if (!stale() && Object.keys(sh).length) sharedSnap = sh
+    const fresh = await refreshSeedBundle()
+    if (!stale()) {
+      seedRetry.reset()
+      // 种子包版本没变：不用替换
+      const changedBundle = fresh && (!fresh.v || fresh.v !== seedVersion)
+      if (changedBundle) {
+        seedVersion = fresh.v || ''
+        overrides.value = parseOverrides(fresh.overrides)
+        seedSnap = parseSeed(fresh.seed)
+      }
+      applyGeoSnaps()
+      sweepGeo({ force: Boolean(changedBundle) }) // 新种子包 / 人工校正：全部结果本地复核一遍；已有坐标在结果不同才换
+    }
+  } catch (e) {
+    console.warn('项目元数据刷新失败', e?.response?.status || e?.message)
+  } finally {
+    metaBusy = false
+  }
 }
 
 async function initAmap() {
@@ -1117,10 +1208,15 @@ async function initAmap() {
     queue = createGeocodeQueue(AMap, {
       concurrency: 3,
       qps: 2.8,
-      maxSearches: REVERIFY ? 400 : 150,
+      maxSearches: REVERIFY ? 5000 : 150,
       onResult: (g, res) => {
-        geoResults[g.key] = res
-        if (res.lnglat && res.source === 'amap' && (g.district || g.city)) postShared({ key: res.query, adcode: g.district || g.city, lnglat: res.lnglat, matched: res.matched, address: res.address, source: res.level })
+        const attempts = res.transient ? (retryAttempts.get(g.key) || 0) + 1 : 0
+        if (res.transient) retryAttempts.set(g.key, attempts)
+        else retryAttempts.delete(g.key)
+        geoResults[g.key] = stamp(res, { attempts })
+        const adcode = g.district || g.city
+        if (res.lnglat && res.source === 'amap' && adcode) postShared({ key: res.query, adcode, lnglat: res.lnglat, matched: res.matched, address: res.address, source: res.level })
+        if (res.fail && !res.transient && adcode) postSharedFail({ key: res.query, adcode, reason: res.code, returned: res.returned, fp: res.fp })
       },
       onFatal: (info) => {
         amapNotice.value = `高德 Key 不可用（${info}）：请检查是否为「Web端(JS API)」Key 及安全密钥、域名白名单。`
@@ -1169,7 +1265,28 @@ onMounted(async () => {
   // 并行：高德 JS、坐标缓存与账号资料同时开始；项目列表只依赖 /me（选接口）
   pre = takePrefetch()
   const amapP = initAmap()
-  const geoP = Promise.all([loadOverrides(), loadSeed(), pre?.shared || loadShared()])
+  // 种子先生效：共享缓存慢 / 挂住不影响已有坐标上图；共享结果到了再合并。两边都结束后才允许查高德（省配额）
+  const seedP = Promise.all([loadOverrides(), loadSeed()]).then(([ov, sd]) => {
+    overrides.value = ov
+    seedSnap = sd
+    applyGeoSnaps()
+    geoReady = true
+    geocodeGroups()
+  })
+  const applyShared = (sh) => {
+    if (Object.keys(sh).length) {
+      sharedSnap = sh
+      applyGeoSnaps()
+    }
+    return sh
+  }
+  // 冷启动可能超时：空结果时隔几秒再试一次，免得把共享里已有的小区都重新查一遍高德
+  const sharedP = Promise.resolve(pre?.shared || loadShared()).then(applyShared).then(async (sh) => {
+    if (Object.keys(sh).length) return sh
+    await new Promise((r) => setTimeout(r, 3000))
+    return applyShared(await loadShared())
+  })
+  const geoP = Promise.all([seedP, sharedP])
   try {
     await loadProfile()
   } catch (e) {
@@ -1177,12 +1294,13 @@ onMounted(async () => {
     loadError.value = `账号信息获取失败：${errorText(e)}`
   }
   refreshStatus()
-  alarmTimer = setInterval(() => refreshStatus(false), 60000)
+  alarmTimer = setInterval(() => mapActive && refreshStatus(false), 60000)
+  sweepTimer = setInterval(() => mapActive && sweepGeo(), 60000)
+  metaTimer = setInterval(() => mapActive && document.visibilityState === 'visible' && refreshMeta(), META_MS)
   const projP = loadProjects()
-  const [ov, sd, sh] = await geoP
-  overrides.value = ov
-  seed.value = { ...sd, ...sh }
-  geoReady = true
+  await geoP
+  applyGeoSnaps() // 高德队列开始前做最终合并
+  queueReady = true
   geocodeGroups()
   await Promise.all([amapP, projP])
   loadGeojson(cityCode.value)
@@ -1197,6 +1315,8 @@ onBeforeUnmount(() => {
   clearInterval(clockTimer)
   clearInterval(onlineExpiry)
   clearInterval(alarmTimer)
+  clearInterval(sweepTimer)
+  clearInterval(metaTimer)
   clearTimeout(alarmRetry)
   window.removeEventListener('online', onNetBack)
   document.removeEventListener('visibilitychange', onVisible)
@@ -1951,12 +2071,12 @@ onBeforeUnmount(() => {
 }
 .pill {
   margin-left: 8px;
-  padding: 1px 8px;
-  font: 600 12px/18px var(--dm-font);
+  padding: 1px 10px;
+  font: 600 14px/20px var(--dm-font);
   font-style: normal;
   color: #fff;
   background: var(--dm-alarm);
-  border-radius: 9px;
+  border-radius: 11px;
 }
 :deep(.title-text) small {
   margin-left: 6px;
@@ -2079,6 +2199,8 @@ onBeforeUnmount(() => {
     min-width: 0;
   }
   .name {
+    flex: 0 1 auto;
+    min-width: 0;
     overflow: hidden;
     white-space: nowrap;
     text-overflow: ellipsis;
@@ -2086,15 +2208,20 @@ onBeforeUnmount(() => {
     font-weight: 500;
     color: var(--dm-text);
   }
+  /* 项目名（含门牌）优先完整：放不下时区县先省略，几乎收完才轮到项目名 */
   .l1 small {
-    flex: none;
-    font-size: 12px;
+    flex: 0 100000 auto;
+    min-width: 0;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+    font-size: 14px;
     color: #7fa3c8;
   }
   .t {
     flex: none;
     margin-left: auto;
-    font-size: 12px;
+    font-size: 14px;
     color: var(--dm-text-3);
     font-variant-numeric: tabular-nums;
   }
@@ -2117,7 +2244,7 @@ onBeforeUnmount(() => {
     overflow: hidden;
     white-space: nowrap;
     text-overflow: ellipsis;
-    font-size: 12px;
+    font-size: 14px;
     color: var(--dm-text-3);
     > span {
       display: inline;
@@ -2138,7 +2265,7 @@ onBeforeUnmount(() => {
     flex: none;
     height: 18px;
     padding: 0 6px;
-    font-size: 11px;
+    font-size: 14px;
     font-style: normal;
     line-height: 16px;
     color: #ffc722;
@@ -2148,7 +2275,7 @@ onBeforeUnmount(() => {
   }
   .tag {
     flex: none;
-    font-size: 11px;
+    font-size: 14px;
     font-style: normal;
     color: var(--dm-text-3);
     &--on {
@@ -2230,6 +2357,31 @@ onBeforeUnmount(() => {
 .map-layer.ready.tour-dip {
   opacity: 0.35;
   transition: opacity 0.15s;
+}
+/* 全屏按钮：图标方块，点按目标 ≥ 40 px（TV 规则），和巡航开关同一套描边 */
+.fs-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: max(40px, calc(40px / var(--ui-scale, 1)));
+  height: max(40px, calc(40px / var(--ui-scale, 1)));
+  padding: 0;
+  color: var(--dm-text-3);
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid var(--dm-line);
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+  &:hover,
+  &:focus-visible {
+    color: var(--dm-text);
+    border-color: var(--dm-accent);
+  }
+  &:focus-visible {
+    outline: 2px solid var(--dm-accent);
+    outline-offset: 2px;
+  }
 }
 /* 巡航开关：图标 + 「巡航」+ 小拨杆；开 = 强调色边框 / 拨杆在右且填色，关 = 灰拨杆在左、文字降一级。常显，不靠悬停 */
 .tour-tg {

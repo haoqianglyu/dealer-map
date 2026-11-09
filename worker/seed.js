@@ -10,7 +10,11 @@ async function tokenId(authz) {
 }
 
 export function createSeedHandler({ seed, overrides, apiOrigin, fetchFn = (...a) => fetch(...a), now = () => Date.now() }) {
-  const body = JSON.stringify({ seed, overrides })
+  // 种子包版本：内容哈希（FNV-1a），前端刷新时据此判断要不要替换
+  const raw = JSON.stringify({ seed, overrides })
+  let h = 2166136261
+  for (let i = 0; i < raw.length; i++) h = Math.imul(h ^ raw.charCodeAt(i), 16777619)
+  const body = JSON.stringify({ seed, overrides, v: (h >>> 0).toString(36) })
   const authOk = new Map() // tokenId -> 有效期
   async function checkAuth(authz) {
     if (!AUTH_RE.test(authz || '')) return false

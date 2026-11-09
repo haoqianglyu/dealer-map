@@ -51,6 +51,9 @@ export function createWarmLights(AMap, map) {
   let lingering = false // 淡出中（400 ms）：仍照常绘制
   let fadeT = 0
   let raf = 0
+  let paused = false // 进详情页：地图在后台，不再绘制
+  const isHidden = () => typeof document !== 'undefined' && document.hidden
+  const isReduced = () => typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches
 
   // 高德把 canvas 包在带 z-index 的 .amap-layer 里（独立层叠上下文），只给 canvas 设 multiply 只会和透明的父层相乘；
   // 所以父层也设（父层与瓦片 canvas 同在 .amap-layers 内，真正乘到底图上）。父层在首次渲染时才挂上，draw 里补一次
@@ -113,7 +116,8 @@ export function createWarmLights(AMap, map) {
     }
     ctx.globalCompositeOperation = mode.blend
     const now = performance.now()
-    const breath = 0.6 + 0.4 * (0.5 + 0.5 * Math.sin((now / 2000) * Math.PI * 2)) // 2 秒一个周期
+    const reduced = isReduced() // 减少动态：告警灯常亮，不呼吸
+    const breath = reduced ? 1 : 0.6 + 0.4 * (0.5 + 0.5 * Math.sin((now / 2000) * Math.PI * 2)) // 2 秒一个周期
     let pulsing = false
     const { halo, core, filament } = palette
     // 小灯先画，大灯后画
@@ -143,12 +147,15 @@ export function createWarmLights(AMap, map) {
       tctx.fillStyle = ink ? '#5a0a18' : '#FFF0E0'
       tctx.fillText(String(l.label), px.x, px.y - 14)
     }
-    if (pulsing) schedule() // 有呼吸灯时持续逐帧重绘
+    if (pulsing && !reduced) schedule() // 有呼吸灯时持续逐帧重绘
   }
   const syncLabel = () => ((visible || lingering) && MODE[paletteName].blend === 'multiply' ? labelLayer.show() : labelLayer.hide())
   const schedule = () => {
-    if (!raf) raf = requestAnimationFrame(draw)
+    if (paused || isHidden() || raf) return
+    raf = requestAnimationFrame(draw)
   }
+  const onVis = () => !isHidden() && schedule() // 回到前台补画
+  if (typeof document !== 'undefined') document.addEventListener('visibilitychange', onVis)
   layer.render = schedule
   labelLayer.render = schedule
   map.add(layer)
@@ -201,7 +208,16 @@ export function createWarmLights(AMap, map) {
       syncLabel()
       schedule()
     },
+    // 进详情页暂停（keep-alive 地图还活着）；返回时立即补画一帧
+    setPaused(v) {
+      paused = Boolean(v)
+      if (paused) {
+        cancelAnimationFrame(raf)
+        raf = 0
+      } else schedule()
+    },
     destroy() {
+      if (typeof document !== 'undefined') document.removeEventListener('visibilitychange', onVis)
       cancelAnimationFrame(raf)
       clearTimeout(fadeT)
       map.off('mapmove', schedule)

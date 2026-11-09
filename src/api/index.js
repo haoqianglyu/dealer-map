@@ -2,6 +2,9 @@
 // 数据范围由后端按当前 token 的账号权限过滤——前端不硬编码任何经销商/区域条件。
 import http from './http'
 import { toOnlineSet } from '../geo/online.js'
+import { projectSeeder } from './detailCache'
+import { createSharedFetch } from '../utils/sharedFetch.js'
+import { session } from './session.js'
 
 export const login = (mobile, password) =>
   http.post('/auth/login', { mobile, password }, { skipAuth: true }).then((r) => r.data)
@@ -21,6 +24,7 @@ export function pickProjectEndpoint(permissionPaths = []) {
 }
 
 export function projectPage(endpoint, { page, limit, region }) {
+  const seed = projectSeeder()
   return http
     .post(endpoint, {
       customer_region: region || '',
@@ -31,7 +35,7 @@ export function projectPage(endpoint, { page, limit, region }) {
       tags: [],
     })
     .then((r) => ({
-      list: r.data?.project_entities || r.data?.entities || [],
+      list: seed(r.data?.project_entities || r.data?.entities || []),
       total: parseInt(r.data?.total, 10) || 0, // total 为字符串（如 "702"）
     }))
 }
@@ -124,6 +128,9 @@ export async function listAlarms({ level = '1', days = 10, limit = 100, concurre
   return out.filter((a) => (seen.has(a.id) ? false : (seen.add(a.id), true))).map(toAlarm)
 }
 
+// 一级告警（近 10 天）的短 TTL 缓存：地图轮询和详情页共用，并发时只发一次全量拉取
+export const sharedAlarms = createSharedFetch(() => listAlarms({ level: '1', days: 10 }), { ttl: 30000, scope: () => session.sid() || '' })
+
 // 在线项目（只读）：GET /ctrl-mode/online-project-id-list → { ids: [...] }（niuniu 同款）。
 // 返回 Set；结构不对 / 空列表 → null（= 未知，页面不据此把项目标成离线）
 export const listOnlineProjectIds = () => http.get('/ctrl-mode/online-project-id-list').then((r) => toOnlineSet(r.data))
@@ -142,6 +149,9 @@ export const getProjectConfig = (configId) =>
 // 传感器历史：start/end 为秒；entities[{ d1 温度, d2 湿度, d3 PM2.5, d4 CO₂, timestamp(秒) }]
 export const getDeviceDataList = ({ deviceId, projectId, start, end }) =>
   http.post('/ctrl/get-device-data-list', { device_id: deviceId, project_id: projectId, start_time: start, end_time: end }).then((r) => r.data?.entities || [])
+export const getWeather = (city) => http.post('/wx/weather', { city }).then((r) => r.data?.weather || null)
+export const getRoomDataList = ({ roomId, projectId, start, end }) =>
+  http.post('/ctrl/get-room-data-list', { room_id: roomId, project_id: projectId, start_time: start, end_time: end }).then((r) => r.data?.entities || [])
 export const getDeviceCategories = () =>
   http.post('/device-categories', { page_options: { page: 1, limit: 0 } }).then((r) => r.data?.device_category_entities || [])
 export const getDeviceModels = () =>

@@ -1,0 +1,8 @@
+{
+  "name": "cosyhome-dealermap-web",
+  "version": "1.0.0",
+  "private": true,
+  "description": "经销商项目地图：静态页面 + 接口转发（Aliyun FC 3.0, Node.js 20；逻辑复用 worker/core.js，esbuild 打包）",
+  "main": "index.js",
+  "license": "UNLICENSED"
+}

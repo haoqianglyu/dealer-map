@@ -4,7 +4,7 @@
 
 <script setup>
 import { computed } from 'vue'
-import * as echarts from 'echarts'
+import { getMap, registerMap } from '@/utils/echarts'
 import EChart from './EChart.vue'
 import { tooltipStyle, isLight } from '@/utils/chartTheme'
 
@@ -21,7 +21,7 @@ const FB_LIGHT = { range: ['#e6eef2', '#b7d3dc', '#5fa3b6', '#0e7490'], area: '#
 
 const option = computed(() => {
   if (!props.geojson || !props.mapName) return {}
-  if (!echarts.getMap(props.mapName)) echarts.registerMap(props.mapName, props.geojson)
+  if (!getMap(props.mapName)) registerMap(props.mapName, props.geojson)
   const max = Math.max(1, ...props.districtStats.map((d) => d.count))
   const c = isLight() ? FB_LIGHT : FB_DARK
   return {

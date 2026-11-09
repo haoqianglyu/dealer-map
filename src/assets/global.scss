@@ -32,6 +32,10 @@
   --dm-notice: #5b8ff9;
   --dm-font: 'PingFang SC', 'Microsoft YaHei', 'Noto Sans SC', 'Helvetica Neue', Arial, sans-serif;
   --dm-num: 'DM Num', 'DIN Alternate', 'Bahnschrift', var(--dm-font);
+  /* 详情页按钮 / 分段容器 / 表头（比面板边亮一档） */
+  --dm-btn-bg: #0d1b2c;
+  --dm-btn-line: #1f3754;
+  --dm-th-bg: #0e1d30;
 }
 /* 亮色主题（docs/fable-light-theme.md §2）：新 token 只在亮色里定义，深色走原硬编码 / 回退值（零变化） */
 :root[data-theme='light'] {
@@ -69,6 +73,9 @@
   --dm-offline: #65758b;
   --dm-offline-fill: 8%;
   --dm-offline-name: #5b6b80;
+  --dm-btn-bg: #f2f5f8;
+  --dm-btn-line: #cdd8e3;
+  --dm-th-bg: #eff3f7;
 }
 
 * {
