@@ -15,6 +15,8 @@
           <button :class="{ on: theme === 'dark' }" :aria-pressed="theme === 'dark'" @click="switchTheme('dark', $event.currentTarget)"><svg class="seg__ic" viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" d="M20 14.5A8 8 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5z" /></svg>深色</button>
           <button :class="{ on: theme === 'light' }" :aria-pressed="theme === 'light'" @click="switchTheme('light', $event.currentTarget)"><svg class="seg__ic" viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4" /><path d="M12 2.5v2.2M12 19.3v2.2M2.5 12h2.2M19.3 12h2.2M5.3 5.3l1.6 1.6M17.1 17.1l1.6 1.6M5.3 18.7l1.6-1.6M17.1 6.9l1.6-1.6" /></g></svg>亮色</button>
         </div>
+        <!-- 全屏：地图页进入时保持全屏，这里可退出；浏览器不支持时不显示 -->
+        <button v-if="fsSupported" class="hbtn hbtn--fs" :aria-pressed="isFullscreen" :aria-label="isFullscreen ? '退出全屏' : '全屏'" :title="isFullscreen ? '退出全屏' : '全屏'" @click="toggleFullscreen"><svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" :d="isFullscreen ? 'M9 4v5H4M15 4v5h5M9 20v-5H4M15 20v-5h5' : 'M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5'" /></svg></button>
         <button class="hbtn hbtn--back" @click="back"><svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" d="M15 5l-7 7 7 7" /></svg>返回上一页</button>
         <button class="hbtn hbtn--out" @click="logout"><svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M10 4H5a1 1 0 0 0-1 1v14a1 1 0 0 0 1 1h5M15 8l4 4-4 4M19 12H9" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" /></svg>退出登录</button>
       </div>
@@ -265,6 +267,8 @@ import { tooltipStyle, categoryAxis, valueAxis, isLight } from '@/utils/chartThe
 import { isShowroom, showName } from '@/utils/showroom'
 import { createAlarmTracker, retryDelay } from '@/geo/alarmPoll'
 import { alarmDisplay, onlineStateOf, ONLINE_LABEL, liveFailText } from '@/utils/detailStatus'
+import { useFullscreen } from '@/composables/useFullscreen'
+const { supported: fsSupported, isFullscreen, toggle: toggleFullscreen } = useFullscreen()
 
 defineOptions({ name: 'ProjectDetail' })
 const { style: screenStyle, sy } = useStretchScale()
@@ -1145,6 +1149,13 @@ html.pd-noscroll body {
 /* 只有顶栏按钮按屏幕像素保底（76 高放得下）；面板内一律固定 40 / 44 */
 .pd__right .hbtn {
   height: max(44px, calc(40px / var(--ui-scale, 1)));
+}
+.pd__right .hbtn--fs {
+  /* 和地图页全屏按钮一致：只显示图标的方块 */
+  flex: none;
+  justify-content: center;
+  width: max(44px, calc(40px / var(--ui-scale, 1)));
+  padding: 0;
 }
 .hbtn--back {
   min-width: 144px;
