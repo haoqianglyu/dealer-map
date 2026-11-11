@@ -3,6 +3,7 @@
 // 只经 Cloudflare Worker 的 /geo-shared 访问（浏览器不直连 FC）。
 //   GET  /geo  -> { v, rev, updated_at, points: { "区县adcode|归一化查询串": { lng, lat, source, confirmed_at, matched_name, matched_address } } }
 //   POST /geo  <- { key, adcode, lng, lat, matched_name, matched_address, source }
+//   POST /geo  <- { failed: true, key, adcode, reason, matched_name, matched_address, fp }（明确查过没找到；7 天过期，不覆盖已有坐标）
 // 鉴权：把调用方的 Authorization（平台 token）转发到 control.cosyhome.com.cn/v1/me，必须 200。
 // 只存「已确认」的坐标与高德返回的名称/地址；不存户号、客户姓名、电话等任何个人信息。
 // OSS 不支持 PUT If-Match，用「create-only 版本锁」做乐观并发：rev/N 以 x-oss-forbid-overwrite 抢占，抢到才写 shared.json。
@@ -37,7 +38,9 @@ function ossReq(method, key, body, extra = {}, ctx) {
   if (type) headers['content-type'] = type;
   return fetch(`https://${OSS.bucket}.${OSS.endpoint}/${key}`, { method, headers, body, signal: AbortSignal.timeout(8000) });
 }
-const empty = () => ({ v: 1, rev: 0, updated_at: null, points: {} });
+const FAIL_TTL = 7 * 24 * 3600 * 1000;
+const MAX_FAILS = 5000;
+const empty = () => ({ v: 1, rev: 0, updated_at: null, points: {}, fails: {} });
 async function readShared(ctx) {
   const r = await ossReq('GET', OSS.key, undefined, {}, ctx);
   if (r.status === 404) return empty();
@@ -61,12 +64,40 @@ function mergePoint(entry, ctx) {
   chain = run.catch(() => {});
   return run;
 }
+// 把一条结果合并进文档（纯函数）；返回新的文档，无需写入时返回 null
+function applyEntry(cur, entry, now = Date.now()) {
+  const fails = pruneFails(cur.fails, now);
+  if (entry.f) {
+    if (cur.points && cur.points[entry.id]) return null; // 已有坐标：失败结果不写
+    const old = fails[entry.id];
+    if (old && old.fp === entry.f.fp && old.r === entry.f.r && now - old.at < 86400000) return null; // 一天内重复上报不写
+    fails[entry.id] = entry.f;
+    return { ...cur, fails: capFails(fails) };
+  }
+  const prev = cur.points[entry.id];
+  if (prev && prev.lng === entry.p.lng && prev.lat === entry.p.lat && prev.matched_name === entry.p.matched_name && !fails[entry.id]) return null;
+  delete fails[entry.id]; // 坐标到了，失败作废
+  return { ...cur, points: { ...cur.points, [entry.id]: entry.p }, fails };
+}
+function pruneFails(fails, now) {
+  const out = {};
+  for (const [k, v] of Object.entries(fails || {})) if (v && v.exp > now) out[k] = v;
+  return out;
+}
+function capFails(fails) {
+  const ks = Object.keys(fails);
+  if (ks.length <= MAX_FAILS) return fails;
+  ks.sort((a, b) => fails[b].at - fails[a].at);
+  const out = {};
+  for (const k of ks.slice(0, MAX_FAILS)) out[k] = fails[k];
+  return out;
+}
 async function mergeOnce(entry, ctx) {
   for (let attempt = 0; attempt < 6; attempt++) {
     const cur = await readShared(ctx);
-    const prev = cur.points[entry.id];
-    if (prev && prev.lng === entry.p.lng && prev.lat === entry.p.lat && prev.matched_name === entry.p.matched_name) return { changed: false, rev: cur.rev };
-    const next = { ...cur, rev: (cur.rev || 0) + 1, updated_at: new Date().toISOString(), points: { ...cur.points, [entry.id]: entry.p } };
+    const applied = applyEntry(cur, entry);
+    if (!applied) return { changed: false, rev: cur.rev };
+    const next = { ...applied, rev: (cur.rev || 0) + 1, updated_at: new Date().toISOString() };
     const body = JSON.stringify(next);
     const lock = await ossReq('PUT', `geo/rev/${String(next.rev).padStart(8, '0')}.json`, body, { 'x-oss-forbid-overwrite': 'true' }, ctx);
     if (lock.status === 409) { await new Promise((r) => setTimeout(r, 150 + Math.random() * 350)); continue; } // 别人先写了：重读重试
@@ -109,16 +140,36 @@ function limited(id) {
 // 单个「元」「室」等字不算（「天元世家」「兰室」是小区名）。先 NFKC 归一：全角 Ａ２＃ → 半角 A2#
 const UNIT_RE = /#|[0-9A-Za-z一二三四五六七八九十百千零〇两壹贰叁肆伍陆柒捌玖拾佰甲乙丙丁戊己庚辛壬癸]+\s*(?:栋|幢|座|号楼|单元|室|层)|[东西南北]\s*(?:栋|幢|座)/;
 const clean = (s, n) => String(s == null ? '' : s).replace(/[\u0000-\u001f]/g, '').trim().slice(0, n);
-function validate(b) {
-  if (!b || typeof b !== 'object') return 'bad body';
-  const key = clean(b.key, 200);
-  const adcode = String(b.adcode || '');
-  const lng = Number(b.lng), lat = Number(b.lat);
+function checkKey(key, adcode) {
   if (!key || key.length > 64) return 'bad key';
   const nk = key.normalize('NFKC'); // 全角数字/字母也要拦（JS 的 \d 只认 ASCII）
   if (/\p{Nd}/u.test(nk)) return 'key must not contain digits'; // 归一化小区名里不会有楼栋/户号数字
   if (UNIT_RE.test(nk)) return 'key looks like a unit address';
   if (!/^\d{6}$/.test(adcode)) return 'bad adcode';
+  return '';
+}
+// 未确认原因白名单：只有「明确查过但没找到」能进共享；临时错误（高德报错、超时、配额）即使前端漏了也进不来
+const FAIL_REASON_RE = /^(未找到|名称不一致|不在本区|分期\/分区不一致或不明确|多个候选相距较远|只找到附属设施|仅匹配到[\u4e00-\u9fa5]{0,10})$/;
+function validateFail(b, now = Date.now()) {
+  if (!b || typeof b !== 'object') return 'bad body';
+  const key = clean(b.key, 200);
+  const adcode = String(b.adcode || '');
+  const bad = checkKey(key, adcode);
+  if (bad) return bad;
+  if (!CENTERS[adcode] && !CENTERS[adcode.slice(0, 4) + '00']) return 'unknown adcode';
+  const r = clean(b.reason, 40);
+  if (!FAIL_REASON_RE.test(r)) return 'reason not allowed';
+  const fp = clean(b.fp, 40);
+  if (!/^r\d+:[0-9a-z]+$/.test(fp)) return 'bad fp';
+  return { id: `${adcode}|${key}`, f: { r, n: clean(b.matched_name, 80), a: clean(b.matched_address, 120), fp, at: now, exp: now + FAIL_TTL } };
+}
+function validate(b) {
+  if (!b || typeof b !== 'object') return 'bad body';
+  const key = clean(b.key, 200);
+  const adcode = String(b.adcode || '');
+  const lng = Number(b.lng), lat = Number(b.lat);
+  const bad = checkKey(key, adcode);
+  if (bad) return bad;
   if (!Number.isFinite(lng) || !Number.isFinite(lat) || lng < 73.4 || lng > 135.2 || lat < 18 || lat > 53.7) return 'outside China';
   const c = CENTERS[adcode] || CENTERS[adcode.slice(0, 4) + '00'];
   if (!c) return 'unknown adcode';
@@ -158,7 +209,7 @@ async function handle({ method, path, headers, body }, ctx) {
     }
     if (limited(who)) return out(429, { error: 'rate limited' }, { 'retry-after': '60' });
     let b; try { b = JSON.parse(body || '{}'); } catch (e) { return out(400, { error: 'bad json' }); }
-    const v = validate(b);
+    const v = b && b.failed === true ? validateFail(b) : validate(b);
     if (typeof v === 'string') return out(400, { error: v });
     const r = await mergePoint(v, ctx);
     return out(200, { ok: true, ...r });
@@ -180,4 +231,4 @@ exports.handler = async (a, b, c) => {
   if (typeof c === 'function') { c(null, res); return; }
   return res;
 };
-exports._test = { validate, handle };
+exports._test = { validate, validateFail, applyEntry, pruneFails, handle };

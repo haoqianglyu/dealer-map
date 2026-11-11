@@ -41,7 +41,10 @@ test('seed: valid token → 200 private JSON {seed, overrides}; auth cached 10 m
   const r = await h(req(TOKEN))
   assert.equal(r.status, 200)
   assert.equal(r.headers.get('cache-control'), 'private, max-age=3600')
-  assert.deepEqual(await r.json(), { seed, overrides })
+  const got = await r.json()
+  assert.ok(got.v, '种子包带版本')
+  delete got.v
+  assert.deepEqual(got, { seed, overrides })
   await h(req(TOKEN))
   assert.equal(calls.length, 1)
   tick(11 * 60 * 1000)

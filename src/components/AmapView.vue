@@ -301,6 +301,7 @@ function openPopover(c, keep = false, by = 'user') {
     requestAnimationFrame(() => {
       avoidUi() // 展开告警 / 更多后弹窗变高，再检查一次是否被界面挡住
       mountPopMq(el.value?.querySelector('.dm-pop'))
+      if (performance.now() - keyTapAt < 1500) el.value?.querySelector('.dm-pop [tabindex],.dm-pop a,.dm-pop button')?.focus({ preventScroll: true })
     })
   )
 }
@@ -520,13 +521,27 @@ function renderLabels() {
 const TAP_SLOP = 12 // px（屏幕像素）
 let downAt = null // 最近一次 pointerdown 的屏幕坐标（onPopDown 捕获阶段记录）
 let dragged = false // 本次按下后曾移出 TAP_SLOP（拖出去再拖回原处抬起也不算点）
+let keyTapAt = 0 // 键盘 / 遥控打开标记的时刻：紧接着开的弹窗把焦点带进去（点按可能先缩放，留 1.5 秒）
+let lastKeyMarker = null // Esc 关弹窗时把焦点还给它
 function tappable(html, onTap) {
   const box = document.createElement('div')
   box.innerHTML = html.trim()
   const node = box.firstElementChild
+  // 键盘 / 遥控：标记可 Tab 聚焦；读屏名称用标记上的文字（「滨湖区 12」）
+  node.setAttribute('tabindex', '0')
+  node.setAttribute('role', 'button')
+  node.setAttribute('aria-label', node.textContent.replace(/\s+/g, ' ').trim() || '小区')
   node.addEventListener('click', (e) => {
     if (dragged || (downAt && Math.hypot(e.clientX - downAt[0], e.clientY - downAt[1]) > TAP_SLOP * k())) return
     e.stopPropagation()
+    onTap()
+  })
+  node.addEventListener('keydown', (e) => {
+    if (e.key !== 'Enter' && e.key !== ' ') return
+    e.preventDefault()
+    e.stopPropagation()
+    keyTapAt = performance.now()
+    lastKeyMarker = node
     onTap()
   })
   return node
@@ -591,10 +606,13 @@ function syncMarkers(list, anim = null) {
       if (!r.ll || r.ll[0] !== s.lnglat[0] || r.ll[1] !== s.lnglat[1]) r.marker.setPosition(s.lnglat)
       r.ll = s.lnglat
       if (r.html !== s.html) {
+        // 轮询更新标记时保住键盘焦点
+        const refocus = document.activeElement === r.node
         r.html = s.html
         r.node = tappable(s.html, () => r.tap())
         r.marker.setContent(r.node)
         r.marker.setzIndex(s.z)
+        if (refocus) r.node.focus({ preventScroll: true })
       }
     } else {
       r = { html: s.html, tap: s.tap, ll: s.lnglat }
@@ -932,6 +950,11 @@ function onPopDown(e) {
 }
 // 遥控 / 键盘：Enter 触发弹窗里的按钮（告警摘要、更多、详情）
 function onPopKey(e) {
+  if (e.key === 'Escape' && inPop(e.target)) {
+    info.close()
+    lastKeyMarker?.focus({ preventScroll: true })
+    return
+  }
   if (e.key !== 'Enter' || !inPop(e.target)) return
   const t = e.target.closest('[data-act],[data-pid]')
   if (t) {
@@ -1194,7 +1217,8 @@ const popOpenedBy = () => pop?.by ?? null
 function claimPop() {
   if (pop) pop.by = 'user'
 }
-defineExpose({ flyCity, flyDistrict, flyCommunity, closePop, popOpenedBy, claimPop })
+const setHeatPaused = (v) => heat && heat.setPaused(v)
+defineExpose({ flyCity, flyDistrict, flyCommunity, closePop, popOpenedBy, claimPop, setHeatPaused })
 
 // keep-alive：回到地图页时让高德重新量一次容器，关掉旧弹窗
 onActivated(() =>
@@ -1204,7 +1228,19 @@ onActivated(() =>
   })
 )
 
+// 全屏切换后容器尺寸变了：等布局和缩放稳定，再让高德重新量一次（未开 resizeEnable）
+let fsTimer = 0
+const onFullscreenChange = () => {
+  clearTimeout(fsTimer)
+  fsTimer = setTimeout(() => map && typeof map.resize === 'function' && map.resize(), 200)
+}
+document.addEventListener('fullscreenchange', onFullscreenChange)
+document.addEventListener('webkitfullscreenchange', onFullscreenChange)
+
 onBeforeUnmount(() => {
+  clearTimeout(fsTimer)
+  document.removeEventListener('fullscreenchange', onFullscreenChange)
+  document.removeEventListener('webkitfullscreenchange', onFullscreenChange)
   offThemeSwitch()
   cancelAnimationFrame(panRaf)
   clearTimeout(idxTimer)
@@ -1291,6 +1327,11 @@ onBeforeUnmount(() => {
   box-shadow: inset 0 0 calc(18px * var(--k, 1)) color-mix(in srgb, var(--c) 28%, transparent);
   cursor: pointer;
   transition: transform 0.12s ease;
+}
+.dm-hit:focus-visible {
+  outline: 2px solid var(--dm-accent);
+  outline-offset: 2px;
+  border-radius: 50%;
 }
 .dm-hit:hover .dm-mk {
   transform: scale(1.06);

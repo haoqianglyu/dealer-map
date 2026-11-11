@@ -21,6 +21,18 @@ const devSeed = () => ({
   },
 })
 
+// 开发：共享缓存只读。调试时产生的定位结果不写回生产的共享缓存（OSS）
+const devGeoReadOnly = () => ({
+  name: 'dev-geo-readonly',
+  configureServer(server) {
+    server.middlewares.use('/geo-shared', (req, res, next) => {
+      if (req.method === 'GET' || (req.url && req.url !== '/' && !req.url.startsWith('/?'))) return next()
+      res.setHeader('content-type', 'application/json; charset=utf-8')
+      res.end('{"ok":true,"dev":true}')
+    })
+  },
+})
+
 // 开发代理到平台：本机到 106.14.238.28 丢包严重——部分新建连接 SYN 无回应、部分已建连接上请求 10–40 s 无响应，直连 curl / node 一样，
 // 不是代码问题；生产走 Worker 不受影响。这里每个请求原本都可能新建连接撞上它 → 60 s 超时 →「告警加载失败」。
 // 对策（仅开发，只能减轻建连那一半）：keep-alive 复用连接；新建连接 3 s 内没完成 TLS 握手就换端口重连（最多 5 次）。
@@ -58,7 +70,7 @@ const upstreamAgent = new RetryAgent({ keepAlive: true })
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '')
   return {
-  plugins: [vue(), devSeed()],
+  plugins: [vue(), devSeed(), devGeoReadOnly()],
   resolve: {
     alias: { '@': fileURLToPath(new URL('./src', import.meta.url)) },
   },

@@ -203,6 +203,7 @@ export function useTour(o) {
       }
       if (!alive(my)) return
       await stepHeat(my, p)
+      if (alive(my)) o.onRoundEnd?.() // 两轮之间：有新版本 / 到了每日重载时段就在这里换页，不打断讲解
     }
   }
 

@@ -7,9 +7,17 @@ import { loadSeedBundle } from './shared.js'
 // 缓存 key = 归一化查询串（市+区+小区）；已确认永久缓存，未确认缓存 7 天（高德「基础搜索」月配额仅 5000 次），
 // 「重新定位待校正」按钮可强制重查。只存坐标/匹配级别/高德返回的名称地址，不存任何项目/客户信息。
 
-const CACHE_VERSION = 'v9' // v9：小区名归一化规则 v3（NORMALIZE_VERSION：市/区县前缀、叠拼、繁体、镇名）
+const CACHE_VERSION = 'v11' // v11：POI 搜索取 50 条（原 5 条），分区多的小区也能看到主条目；v10：完全同名且不带分期的结果不再因旁边有分期被拦； v9：小区名归一化规则 v3（NORMALIZE_VERSION：市/区县前缀、叠拼、繁体、镇名）
 const CACHE_KEY = `dealer-map:geo:${CACHE_VERSION}`
 const FAIL_TTL = 7 * 24 * 3600 * 1000
+// 定位规则版本：规则变化后旧的「未确认」结果要重审（写进失败结果的指纹里）；只影响失败结果，已确认的坐标不失效
+export const GEO_RULE = 'r2'
+// 查询指纹：规则版本 + 全部候选查询串（与顺序无关）。候选变了 / 规则变了，旧的未确认结果就不再作数
+export function groupFp(group) {
+  let h = 2166136261
+  for (const ch of [...new Set(group?.queries || [])].sort().join('\n')) h = Math.imul(h ^ ch.charCodeAt(0), 16777619)
+  return `${GEO_RULE}:${(h >>> 0).toString(36)}`
+}
 
 // ---------- 名称确认 ----------
 // 分期/分区（一期、3期、东区、A区、二区、东苑…）是不同的小区，可能相距很远：单独提取，必须完全一致。
@@ -48,6 +56,56 @@ export function matchName(community, cand) {
   if (!base) return 'no'
   // 分期必须完全一致；项目没写分期而高德结果带分期 → 不明确
   return phasesOf(community) === phasesOf(cand) ? 'ok' : 'phase'
+}
+// 高德结果和小区名完全相同（只忽略标点），都不带分期：即使旁边还有分期结果，也认这个主条目
+export const isExactName = (community, cand) =>
+  !phasesOf(community) && !phasesOf(cand) && String(community || '').replace(PUNCT_RE, '') === String(cand || '').replace(PUNCT_RE, '')
+// 完全同名（只忽略标点，分期也要一样）：包含带分期的同名，比如「江南府三期」对「江南府三期」
+export const isSameName = (community, cand) => String(community || '').replace(PUNCT_RE, '') === String(cand || '').replace(PUNCT_RE, '') && Boolean(String(community || '').replace(PUNCT_RE, ''))
+
+// 附属设施：售楼处、停车场、大门、地铁站、物业…… 名字里可能带小区全名，但不是小区本身，不能拿来定位。
+// 只看去掉小区名之后剩下的部分，「龙门花园」「公交新村」这种名字本身带关键词的不受影响
+const FACILITY_WORD_RE = /售楼|销售中心|营销中心|接待中心|展示中心|停车场|停车库|车库|充电站|加油站|地铁|轻轨|公交|客运站|物业|门卫|岗亭|幼儿园|小学|中学|学校|医院|诊所|超市|便利店|药店|餐厅|菜场|菜市场|垃圾|消防|变电|配电|出入口|入口|出口/
+const FACILITY_GATE_RE = /^[东西南北中正侧后主大小\d一二三四五六七八九十号]{0,4}门(?:岗|卫)?$/
+export function isFacility(community, cand, type = '') {
+  const raw = String(cand || '')
+  const name = String(community || '')
+  const tail = (name && raw.includes(name) ? raw.replace(name, '') : raw).replace(/[()（）\s·•\-－—_]/g, '')
+  return FACILITY_WORD_RE.test(tail) || FACILITY_GATE_RE.test(tail) || /^交通设施服务/.test(String(type || ''))
+}
+
+const toPt = (loc) => {
+  const l = Array.isArray(loc) ? { lng: loc[0], lat: loc[1] } : loc
+  return [Number(Number(l.lng).toFixed(6)), Number(Number(l.lat).toFixed(6))]
+}
+const distKm = ([a, b], [c, d]) => Math.hypot((a - c) * 111.32 * Math.cos(((b + d) / 2) * (Math.PI / 180)), (b - d) * 110.57)
+// 候选之间最远的两点（km）；只看前 10 个，够判断是不是同一处
+export const spreadKm = (pts) => {
+  let m = 0
+  const list = pts.slice(0, 10)
+  for (let i = 0; i < list.length; i++) for (let j = i + 1; j < list.length; j++) m = Math.max(m, distKm(list[i], list[j]))
+  return m
+}
+const SPREAD_KM = 3
+// 从 POI 结果里选点（纯函数）：先过滤区外和附属设施；完全同名 > 主体同名 > 包含；同档候选相距超过 3 km 转待校正。
+// 返回 { hit } | { ambiguous: [名称], why } | { none: 区内去掉附属设施后没有一个匹配, facilityOnly }
+export function pickPoi(name, pois, group) {
+  const withLoc = (pois || []).filter((p) => p.location)
+  const inDist = withLoc.filter((p) => inDistrict(p.adcode, group))
+  const cands = inDist.filter((p) => !isFacility(name, p.name, p.type))
+  const ok = cands.filter((p) => matchName(name, p.name) === 'ok')
+  const phased = cands.filter((p) => matchName(name, p.name) === 'phase')
+  const names = () => [...ok, ...phased].map((p) => p.name).slice(0, 4).join('、')
+  const exact = ok.filter((p) => isSameName(name, p.name))
+  const core = ok.filter((p) => coreName(name) === coreName(p.name))
+  // 项目没写分期而区内同名小区有多个分期 → 不明确；有完全同名的主条目时仍认它
+  const tier = exact.length ? exact : !phasesOf(name) && phased.length ? [] : core.length ? core : ok
+  if (tier.length) {
+    if (spreadKm(tier.map((p) => toPt(p.location))) > SPREAD_KM) return { ambiguous: names(), why: '多个候选相距较远' }
+    return { hit: tier[0] }
+  }
+  if (ok.length || phased.length) return { ambiguous: names(), why: '分期/分区不一致或不明确' }
+  return { none: true, facilityOnly: inDist.some((p) => matchName(name, p.name) !== 'no') }
 }
 // community：归一化小区名（已去市区前缀）；candidates：高德返回的名称 / 地址（已去省市区前缀）
 export function namesMatch(community, candidates) {
@@ -142,10 +200,11 @@ export function parseSeed(o) {
 }
 export const loadSeed = () => loadSeedBundle().then((b) => parseSeed(b?.seed))
 export const seedKey = (district, query) => `${district || ''}|${query}`
+// 静态失败种子的导出格式：{ f: 原因, ret, fp: 指纹（含规则版本）, exp: 过期时刻 }
 
 // 不访问网络的查找：override → seed → 缓存（已确认；或 7 天内的未确认结果）。
 // 种子/缓存里的已确认结果按当前规则离线复核（有匹配名称时复核名称；无名称时泛称/短名一律待校正），不发请求。
-export function lookupLocal(group, overrides, seed = {}, { ignoreSeedFail = false } = {}) {
+export function lookupLocal(group, overrides, seed = {}, { ignoreSeedFail = false, allowSeedRetry = null } = {}) {
   const { queries } = group
   const district = group.district || group.city // 全市范围查询（名称前缀只给出市）的种子 / 共享 key 用市 adcode
   const c = loadCache()
@@ -159,7 +218,10 @@ export function lookupLocal(group, overrides, seed = {}, { ignoreSeedFail = fals
     source: 'recheck',
     query: q,
   })
-  for (const q of queries) {
+  // 本市前缀的旧分组曾按全市范围查：旧查询串 / 旧范围上的结果继续有效（只读，不再拿它发新查询）
+  const legacy = group.legacy || null
+  const all = legacy ? [...queries, ...legacy.queries] : queries
+  for (const q of all) {
     if (overrides[q]) return { lnglat: overrides[q], level: '人工校正', source: 'override', query: q }
   }
   let firstReject = null
@@ -176,13 +238,39 @@ export function lookupLocal(group, overrides, seed = {}, { ignoreSeedFail = fals
     if (recheck(i, hit.n)) return { lnglat: hit.p, level: hit.l, matched: hit.n || '', address: hit.a || '', source: 'cache', query: q }
     firstReject = firstReject || rejected(q, hit.n)
   }
+  if (legacy) {
+    // 旧结果按当时的关键词复核（legacy.keywords 与 queries 对应）
+    const legacyOk = (i, matched) => {
+      const kw = stripPlace(legacy.keywords?.[i] || group.community, group)
+      return matched ? namesMatch(kw, [matched]) : !isStrictName(kw) && !phasesOf(kw)
+    }
+    for (const [i, q] of legacy.queries.entries()) {
+      const hit = seed[seedKey(legacy.scope, q)] || null
+      const pt = Array.isArray(hit) ? hit : hit?.p
+      if (pt && legacyOk(i, hit.n)) return { lnglat: pt, level: hit.shared ? '共享缓存' : '种子', matched: hit.n || '', address: hit.a || '', source: hit.shared ? 'shared' : 'seed', query: q }
+      const ch = c[q]
+      if (ch?.p && legacyOk(i, ch.n)) return { lnglat: ch.p, level: ch.l, matched: ch.n || '', address: ch.a || '', source: 'cache', query: q }
+    }
+  }
   if (firstReject && !ignoreSeedFail) return firstReject
   const key = queries[0]
+  const fp = groupFp(group)
   const f = key && c[key]
-  if (f?.f && Date.now() - f.t < FAIL_TTL) return { fail: true, reason: f.r, returned: f.ret || null, source: 'cache' }
+  // 候选变了或规则变了：旧的未确认结果作废；没有指纹的旧缓存只在单一候选时沿用
+  if (f?.f && Date.now() - f.t < FAIL_TTL && (f.fp ? f.fp === fp : queries.length === 1)) return { fail: true, reason: f.r, returned: f.ret || null, source: 'cache', fp }
   const sf = !ignoreSeedFail && key && seed[seedKey(district, key)]
-  if (sf?.f) return { fail: true, reason: sf.f, returned: sf.ret || null, source: 'seed', query: key }
+  if (sf?.f && (sf.shared ? sf.fp === fp && sf.exp > Date.now() : !seedFailRetriable(sf, group, fp, key, allowSeedRetry))) {
+    return { fail: true, reason: sf.f, returned: sf.ret || null, source: sf.shared ? 'shared' : 'seed', query: key, fp: sf.fp || '' }
+  }
   return null
+}
+// 静态失败种子能不能放行重查：
+//   带指纹 / 期限的新格式：指纹不同（候选或规则变了）或过期才放行；
+//   没有指纹的旧格式（现有 161 条）：只有一组候选时沿用，多候选算候选变了。
+//   放行受 allowSeedRetry 的每轮额度约束（额度用完继续认这条失败），不会一次全部重查
+function seedFailRetriable(sf, group, fp, key, allow) {
+  const changed = sf.fp ? sf.fp !== fp || Boolean(sf.exp && sf.exp <= Date.now()) : group.queries.length > 1
+  return changed && Boolean(allow && allow(key))
 }
 
 // 「重新定位待校正」：删掉这些查询串的未确认缓存
@@ -199,6 +287,7 @@ export function exportSeed(entries) {
   return out
 }
 
+const MAX_LIVE = 4 // 每个小区最多拿前 4 组候选真去查高德
 const KEY_ERRORS = /KEY|PLAT|SIGNATURE|DOMAIN|SECURITY|OVER_LIMIT|OVER_QUOTA|ACCESS_TOO_FREQUENT|IP_QUERY/i
 
 // 高德回调偶尔不触发：8 秒超时按临时错误处理（不写缓存，下次再试）
@@ -232,7 +321,7 @@ export function createGeocodeQueue(AMap, { concurrency = 3, qps = 2.8, maxSearch
   }
   const searchers = new Map() // 小区名 POI 搜索（Geocoder 只给到区县/道路级时的兜底），限定在本区县
   const getSearcher = (city) => {
-    if (!searchers.has(city)) searchers.set(city, new AMap.PlaceSearch({ city: city || '全国', citylimit: Boolean(city), pageSize: 5, extensions: 'all' }))
+    if (!searchers.has(city)) searchers.set(city, new AMap.PlaceSearch({ city: city || '全国', citylimit: Boolean(city), pageSize: 50, extensions: 'all' }))
     return searchers.get(city)
   }
   const fatal = (status, result) => {
@@ -248,10 +337,7 @@ export function createGeocodeQueue(AMap, { concurrency = 3, qps = 2.8, maxSearch
   let stopped = false
   const c = loadCache()
 
-  const pt = (loc) => {
-    const l = Array.isArray(loc) ? { lng: loc[0], lat: loc[1] } : loc
-    return [Number(Number(l.lng).toFixed(6)), Number(Number(l.lat).toFixed(6))]
-  }
+  const pt = toPt
   const confirm = (q, p, level, matched, address = '') => {
     c[q] = { p, l: level, n: matched, a: address, t: Date.now() }
     saveCache()
@@ -261,12 +347,15 @@ export function createGeocodeQueue(AMap, { concurrency = 3, qps = 2.8, maxSearch
   async function resolveGroup(group) {
     let best = null // 未确认时展示「高德返回了什么」：{ name, address, adcode, why }
     let transient = false
+    // 单个小区的候选上限：同组合并候选后可能很多，高德「基础搜索」月配额有限；查询用前 MAX_LIVE 个，本地查找仍用全部
+    const queries = group.queries.slice(0, MAX_LIVE)
+    const keywords = (group.keywords || []).slice(0, MAX_LIVE)
     const note = (cand) => {
       if (!best || (!best.name && cand.name)) best = cand
     }
     // 第一步：Geocoder（限定区县）
-    for (const [i, q] of group.queries.entries()) {
-      const kw = stripPlace(group.keywords?.[i] || group.community, group)
+    for (const [i, q] of queries.entries()) {
+      const kw = stripPlace(keywords[i] || group.community, group)
       await slot()
       const { status, result } = await geocodeOnce(getGeocoder(group.geoCity), q)
       if (fatal(status, result)) return null
@@ -282,12 +371,16 @@ export function createGeocodeQueue(AMap, { concurrency = 3, qps = 2.8, maxSearch
       const okDistrict = inDistrict(g.adcode, group)
       const okLevel = GOOD_LEVELS.has(g.level)
       const m = okLevel ? matchName(kw, tail) : 'no'
-      if (okDistrict && m === 'ok') return confirm(q, pt(g.location), g.level, tail, addr)
-      note({ name: '', address: addr, adcode: g.adcode, why: !okLevel ? `仅匹配到${g.level}` : !okDistrict ? '不在本区' : m === 'phase' ? '分期/分区不一致或不明确' : '名称不一致' })
+      const facility = isFacility(kw, tail)
+      if (okDistrict && m === 'ok' && !facility) return confirm(q, pt(g.location), g.level, tail, addr)
+      note({ name: '', address: addr, adcode: g.adcode, why: !okLevel ? `仅匹配到${g.level}` : !okDistrict ? '不在本区' : facility ? '只找到附属设施' : m === 'phase' ? '分期/分区不一致或不明确' : '名称不一致' })
     }
     // 第二步：按小区名做 POI 搜索（限定区县）
-    for (const [i, kw] of (group.keywords || []).entries()) {
-      const q = group.queries[i]
+    const searched = new Set()
+    for (const [i, kw] of keywords.entries()) {
+      const q = queries[i]
+      if (searched.has(kw)) continue
+      searched.add(kw)
       if (searches >= maxSearches) {
         transient = true
         note({ why: '本轮搜索配额已用完' })
@@ -305,13 +398,17 @@ export function createGeocodeQueue(AMap, { concurrency = 3, qps = 2.8, maxSearch
       const pois = (status === 'complete' && result?.poiList?.pois) || []
       const withLoc = pois.filter((p) => p.location)
       const name = stripPlace(kw, group)
-      const inDist = withLoc.filter((p) => inDistrict(p.adcode, group))
-      const ok = inDist.filter((p) => matchName(name, p.name) === 'ok')
-      const phased = inDist.filter((p) => matchName(name, p.name) === 'phase')
-      // 项目没写分期、而区内同名小区有多个分期 → 不明确，进待校正并列出候选
-      if (ok.length && (phasesOf(name) || !phased.length)) return confirm(q, pt(ok[0].location), '兴趣点(POI)', ok[0].name, [ok[0].adname, ok[0].address].filter((x) => x && typeof x === 'string').join(''))
-      if (ok.length || phased.length) {
-        best = { name: [...ok, ...phased].map((p) => p.name).slice(0, 4).join('、'), address: '', why: '分期/分区不一致或不明确' }
+      const pick = pickPoi(name, pois, group)
+      if (pick.hit) {
+        const hit = pick.hit
+        return confirm(q, pt(hit.location), '兴趣点(POI)', hit.name, [hit.adname, hit.address].filter((x) => x && typeof x === 'string').join(''))
+      }
+      if (pick.ambiguous) {
+        best = { name: pick.ambiguous, address: '', why: pick.why }
+        continue
+      }
+      if (pick.facilityOnly) {
+        note({ name: withLoc[0]?.name || '', address: '', why: '只找到附属设施' })
         continue
       }
       const top = withLoc[0]
@@ -319,11 +416,12 @@ export function createGeocodeQueue(AMap, { concurrency = 3, qps = 2.8, maxSearch
     }
     const returned = best && (best.name || best.address) ? { name: best.name || '', address: best.address || '' } : null
     const reason = best?.why || '未找到'
+    const fp = groupFp(group)
     if (!transient && group.queries[0]) {
-      c[group.queries[0]] = { f: 1, r: reason, ret: returned, t: Date.now() } // 未确认也缓存 7 天，省配额
+      c[group.queries[0]] = { f: 1, r: reason, ret: returned, t: Date.now(), fp } // 未确认也缓存 7 天，省配额
       saveCache()
     }
-    return { fail: true, transient, returned, reason: reason + (transient ? '（高德临时错误，下次加载重试）' : '') }
+    return { fail: true, transient, returned, reason: reason + (transient ? '（高德临时错误，下次加载重试）' : ''), code: reason, query: group.queries[0], fp, source: 'amap' }
   }
 
   function pump() {

@@ -12,7 +12,7 @@ export function statusName(status, delivered) {
 }
 
 // 把两种接口（/ctrl/projects 与 /project/new-list）的项目统一成页面所需的最小字段。
-// 不保留客户姓名、电话、门牌等字段。
+// 不保留客户姓名、电话等字段；项目名（含楼栋门牌）只在登录后的页面显示，不写入缓存 / 日志。
 export function toProject(raw) {
   const region = parseRegion(raw.customer_region || raw.region)
   const ctx = { city: region.city, regions: DISTRICTS }
@@ -23,15 +23,22 @@ export function toProject(raw) {
   const hint = fromName.hint || fromAddr.hint || ''
   let { province, city: cityCode, district: districtCode } = region
   let geoDistrict = districtCode
+  let legacy = null
   if (hint && !/00$/.test(hint)) {
     cityCode = /^(11|12|31|50)/.test(hint) ? `${hint.slice(0, 2)}0100` : `${hint.slice(0, 4)}00`
     province = `${hint.slice(0, 2)}0000`
     districtCode = geoDistrict = hint
   } else if (hint) {
-    if (hint !== cityCode) districtCode = ''
-    cityCode = hint
-    province = `${hint.slice(0, 2)}0000`
-    geoDistrict = ''
+    // 本市前缀（「无锡市示例花园」填在滨湖区）：地址没写错，保留所填区县范围；旧版本按全市查过，旧结果放进 legacy 继续命中
+    // 跨市前缀（「苏州市示例花园」填在无锡）：所填区县作废，到前缀的城市全市范围重查
+    if (hint === cityCode && geoDistrict) {
+      legacy = { scope: cityCode }
+    } else {
+      if (hint !== cityCode) districtCode = ''
+      cityCode = hint
+      province = `${hint.slice(0, 2)}0000`
+      geoDistrict = ''
+    }
   }
   const city = regionInfo(cityCode)
   const district = regionInfo(districtCode)
@@ -39,6 +46,8 @@ export function toProject(raw) {
   // 以 name 为主（小区名 + 楼/户号），customer_address 作为第二候选
   const communities = [...new Set([fromName.name, fromAddr.name].filter(Boolean))]
   const queries = communities.map((c) => geoQuery(city?.name, geoDist?.name, c))
+  if (legacy) legacy.queries = communities.map((c) => geoQuery(city?.name, '', c))
+  if (legacy) legacy.keywords = communities
   const vague = communities.length ? '' : fromName.vague || fromAddr.vague
   const created = raw.created_at || raw.create_time || ''
   const rawName = String(raw.name || '').trim()
@@ -51,6 +60,7 @@ export function toProject(raw) {
     community: communities[0] || '',
     queries,
     keywords: communities, // 小区名（不带市区前缀），用于 POI 搜索兜底
+    legacy, // 本市前缀的项目：旧版本的全市范围查询串，只用来找回旧结果
     vague, // 名字只剩区县 / 镇名：不查，进待校正「名字太泛」
     province,
     city: cityCode,

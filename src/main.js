@@ -3,8 +3,11 @@ import App from './App.vue'
 import router from './router'
 import './assets/global.scss'
 import { startTokenRefresh } from './composables/useTokenRefresh'
+import { startAutoReload } from './composables/useAutoReload'
 
-createApp(App).use(router).mount('#app')
+const app = createApp(App)
+startAutoReload(app) // 在 mount 之前注册，首屏渲染错误也能被接到
+app.use(router).mount('#app')
 startTokenRefresh()
 
 // 新版本部署后，旧页面预加载的 chunk 可能已不存在：刷新一次拿新版（10 秒内不重复刷新）
